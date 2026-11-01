@@ -7,7 +7,7 @@ The planned product has a server running agents and local models, with a simple 
 ## Install (Linux, Python 3, no root)
 
 ```sh
-git clone https://github.com/beckettwhisnant12-cmd/project-bots.git
+git clone https://github.com/Laguna-214/project-bots.git
 cd project-bots
 sh install.sh
 export PATH="$HOME/.local/bin:$PATH"
