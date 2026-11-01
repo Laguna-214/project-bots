@@ -14,7 +14,16 @@ export PATH="$HOME/.local/bin:$PATH"
 project-bots --help
 ```
 
-The installer copies the stdlib-only Python package to `~/.local/lib/project-bots` and creates `~/.local/bin/project-bots`; the clone can then be removed. Re-run `sh install.sh` to update. Python 3.9+ recommended. No system services or global packages are changed.
+The installer copies the stdlib-only Python package to `~/.local/lib/project-bots` and creates `~/.local/bin/project-bots` and `~/.local/bin/project-bots-uninstall`; the clone can then be removed. Re-run `sh install.sh` to update. Python 3.9+ recommended. No system services or global packages are changed.
+
+## Uninstall
+
+```sh
+~/.local/bin/project-bots-uninstall
+# Or, from the repository clone: sh uninstall.sh
+```
+
+This removes the installed CLI, package, and uninstaller. It **keeps** `~/.config/project-bots/config.json` so settings are not deleted unexpectedly. Stop any running setup server first. To remove the retained configuration too, delete it manually after reviewing it.
 
 ## Configure
 
