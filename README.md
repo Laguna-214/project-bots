@@ -16,6 +16,14 @@ project-bots --help
 
 The installer copies the stdlib-only Python package to `~/.local/lib/project-bots` and creates `~/.local/bin/project-bots` and `~/.local/bin/project-bots-uninstall`; the clone can then be removed. Re-run `sh install.sh` to update. Python 3.9+ recommended. No system services or global packages are changed.
 
+## Update
+
+```sh
+project-bots update
+```
+
+This one command fetches the latest `main` revision from the [official repository](https://github.com/Laguna-214/project-bots) over HTTPS and reinstalls the program. It works even if you deleted the original clone, requires `git`, and leaves `~/.config/project-bots/config.json` untouched. Running it again when the installed revision matches reports that it is up to date. Updates are **manual** and currently track the development branch rather than signed releases; review the repository before updating if you need a pinned, audited build. Stop a running setup server before updating, then restart it to load the new code.
+
 ## Uninstall
 
 ```sh

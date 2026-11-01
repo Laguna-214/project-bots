@@ -4,6 +4,8 @@ src=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 prefix=${HOME:?}/.local
 mkdir -p "$prefix/lib/project-bots" "$prefix/bin"
 cp -R "$src/project_bots" "$prefix/lib/project-bots/"
+revision=$(git -C "$src" rev-parse --verify HEAD 2>/dev/null || true)
+printf '%s\n' "${revision:-unknown}" > "$prefix/lib/project-bots/REVISION"
 printf '#!/bin/sh\nPYTHONPATH="%s/lib/project-bots" exec python3 -m project_bots.cli "$@"\n' "$prefix" > "$prefix/bin/project-bots"
 chmod 755 "$prefix/bin/project-bots"
 cp "$src/uninstall.sh" "$prefix/bin/project-bots-uninstall"

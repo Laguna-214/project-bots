@@ -18,7 +18,7 @@ def codex_status():
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog='project-bots', description='Project Bots configuration (no inference runtime). Commands: setup web, setup local, codex login, codex status')
+    parser = argparse.ArgumentParser(prog='project-bots', description='Project Bots configuration (no inference runtime). Commands: setup web, setup local, codex login, codex status, update')
     sub = parser.add_subparsers(dest='command')
     setup = sub.add_parser('setup', help='Configure providers')
     modes = setup.add_subparsers(dest='mode')
@@ -28,6 +28,7 @@ def main(argv=None):
     web.add_argument('--port', type=int, default=8032)
     codex = sub.add_parser('codex', help='Official Codex CLI authentication')
     codex.add_argument('action', choices=['login', 'status'])
+    sub.add_parser('update', help='Update from the official GitHub main branch')
     args = parser.parse_args(argv)
     if args.command == 'setup' and args.mode == 'local':
         print('Providers: ' + ', '.join(PRESETS))
@@ -60,8 +61,11 @@ def main(argv=None):
         message, ready = codex_status()
         print(message)
         return 0 if ready else 1
+    if args.command == 'update':
+        from .update import update
+        return update()
     parser.print_help()
-    print('Commands: setup web, setup local, codex login, codex status')
+    print('Commands: setup web, setup local, codex login, codex status, update')
     return 0
 
 
