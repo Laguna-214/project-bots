@@ -1,44 +1,52 @@
 # Project Bots
 
-**Self-hosted local AI agents made easy.** Project Bots is an open-source project for people who want to run useful AI agents on a spare computer or homelab without assembling a complicated stack.
+**Self-hosted local AI agents made easy** for spare computers and homelabs. **Current state is configuration-only:** the installer, CLI, and setup UI work, but there is no agent runtime, model inference, local-model installer, device pairing, desktop GUI, or remote access yet.
 
-> **Status: planning.** There is no working release or installer yet. This repository documents the direction of the project; features below are goals, not shipped capabilities.
+The planned product has a server running agents and local models, with a simple LAN web UI and optional companion app. The intended first-run flow is guided hardware detection, a recommended model and configuration, and a clear first task. Host execution comes first; per-agent VMs are a future advanced option. Agents sharing a host are not isolated from one another.
 
-## The idea
+## Install (Linux, Python 3, no root)
 
-A server app runs the agents and local AI models on your computer. A simple web UI on your LAN lets you give an agent a task, follow its progress, review results, and approve important actions. An optional companion app and Tailscale-based remote access may follow.
+```sh
+git clone https://github.com/beckettwhisnant12-cmd/project-bots.git
+cd project-bots
+sh install.sh
+export PATH="$HOME/.local/bin:$PATH"
+project-bots --help
+```
 
-The intended first-run experience is: install the server, let a setup advisor check the machine's resources, choose what you want agents to do, accept a recommended local model and configuration, and create your first agent.
+The installer copies the stdlib-only Python package to `~/.local/lib/project-bots` and creates `~/.local/bin/project-bots`; the clone can then be removed. Re-run `sh install.sh` to update. Python 3.9+ recommended. No system services or global packages are changed.
 
-## Design goals
+## Configure
 
-- **Local-first:** run models and agent work on hardware you control.
-- **Easy setup:** sensible defaults and a guided setup instead of manual configuration.
-- **Clear control:** show what an agent is doing and request approval for consequential actions.
-- **Honest isolation:** distinguish agents sharing a host environment from agents isolated in separate VMs.
-- **Useful from anywhere at home:** a responsive LAN web UI, with optional private remote access rather than a public internet port.
+```sh
+project-bots setup local            # interactive wizard at the server terminal
+project-bots setup web              # binds 0.0.0.0:8032; open http://SERVER_LAN_IP:8032
+project-bots setup web --host 127.0.0.1  # safer over SSH port forwarding
+```
 
-## Execution modes under consideration
+The web server prints a fresh, random bootstrap access token **only on its console**; enter that token in the page. Every `/api/*` request requires it. It changes on every server start and is never saved. The UI indicates Codex CLI sign-in status. Stop the server with Ctrl-C when finished. Web configuration and local wizard share `~/.config/project-bots/config.json` (override with `PROJECT_BOTS_CONFIG`), written atomically with mode `0600`. Config stores provider, endpoint, model, and **the name** of the server environment variable for an API key, never the key itself.
 
-1. **Host mode:** one or more agents run on the server under limited permissions. Simple and efficient, but separate agents in this mode are **not** security boundaries.
-2. **Isolated mode:** multiple agents each run in a configurable VM. This is a longer-term option, not a prerequisite for a useful first release.
+Providers: OpenAI, Anthropic, Google Gemini, xAI, OpenRouter, DeepSeek, Mistral, Groq, Together AI, Fireworks AI, Ollama, LM Studio, Codex/ChatGPT, and custom OpenAI-compatible HTTPS endpoints. Explicit HTTP endpoints are allowed only on loopback. Enter a model identifier supported by your provider; setup validates its syntax, **not** remote availability or compatibility. Presets are configuration hints, not implemented provider adapters.
 
-A shared local model service could serve agents in either execution mode, avoiding a separate model loaded inside every VM.
+For key-based providers, provision the named variable **on the server**, outside the web UI, before any future runtime is started; for example `export OPENAI_API_KEY=...` in a private terminal. Never paste key values into setup or its JSON APIs. Do not put them in shell history or shared files. Codex uses its **official installed CLI** instead:
 
-## Initial milestone
+```sh
+project-bots codex login      # invokes: codex login --device-auth (server console only)
+project-bots codex status     # invokes: codex login status
+```
 
-Prove one complete, safe workflow: install the server, pair a device on the LAN, grant access to a selected folder, ask a local-model agent to summarize its contents with citations, and review the result. The agent must not modify files or access folders outside its granted scope.
+Install the official Codex CLI yourself first; Project Bots neither reads nor copies its credentials and does not implement OAuth.
 
-The setup advisor, additional integrations, companion app, scheduling, and per-agent VMs should be developed against a working core rather than promised as part of the first milestone.
+## Security limitations
 
-## Security direction
+The LAN UI uses **plaintext HTTP**. API key *values* are not collected, transmitted or stored, but the bootstrap token and non-secret configuration do cross the LAN in plaintext. Use only on a trusted LAN. For an untrusted network, bind loopback and use an SSH tunnel (`ssh -L 8032:127.0.0.1:8032 SERVER`), then open `http://127.0.0.1:8032`. **Do not expose port 8032 to the public internet.** HTTP offers no confidentiality against LAN sniffing and no server identity. The token is bearer authentication, not a substitute for TLS. Setup also validates Host and Origin, requires a custom origin header and per-process CSRF token for writes, blocks cross-origin browser access, avoids logging requests, and sends a restrictive content security policy. These measures do not protect against a compromised browser or host. Saved config is private to the user, not encrypted at rest. No agent permissions or file isolation exist because no agent runtime exists.
 
-The design aims for local-only networking by default, authenticated device pairing, least-privilege access to files and tools, protected credentials, and explicit approvals for sending, publishing, purchases, deletion, and system changes. These are design goals, **not guarantees of the current repository**. Do not use this project for sensitive tasks until an implementation and its security properties have been reviewed.
+## Tests
 
-## Contributing
+```sh
+python3 -m unittest discover -s tests -v
+```
 
-The project is at the planning stage. Ideas, use cases, and constructive design feedback are welcome through GitHub Issues. Implementation and contribution guidelines will be added as the project takes shape.
+## Roadmap
 
-## License
-
-[MIT](LICENSE)
+Agent runtime and inference, permissioned folders, approvals, local models, and desktop GUI are future work; none are shipped here. [MIT](LICENSE).
