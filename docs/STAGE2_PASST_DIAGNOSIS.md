@@ -1,6 +1,6 @@
 # Passt follow-up diagnosis — 2026-11-02
 
-**Stage 2 remains blocked. No application networking fix or full acceptance is claimed.** This investigation made no privileged changes, disabled no confinement, created no VM, and left no probe process or SSH tunnel running.
+**Historical diagnosis, before the administrator's approved repair.** The later [real acceptance runs](STAGE2_ACCEPTANCE.md) read back permanent attach_disconnected and reciprocal exact-peer TERM rules, observed passt/libvirtd enforcing, and passed actual DHCP, guest SSH, cloud-init Desktop installation, graphical greeter, reboot, shutdown/re-start and cleanup with no orphan passt. Authenticated management integration works. The old accept failure is no longer a blocker; the separate stale guest networkd wait-online/degraded-boot issue was subsequently fixed with a fixed new-instance cloud-init migration and proven on a fresh platform-created guest (4.916-second clean reboot, zero failed units). Stage 2 runtime gates are complete, pending parent review/publication; no Stage 3 yet. No privileged host change was made by this agent. The original investigation below made no privileged changes, disabled no confinement, created no VM, and left no probe process or SSH tunnel running.
 
 ## Proven immediate failure
 

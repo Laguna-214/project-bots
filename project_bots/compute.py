@@ -230,7 +230,12 @@ class ComputeService:
         self.run(['qemu-img', 'resize', '-f', 'qcow2', str(disk), str(data['disk_gib']) + 'G'])
         cloud = {'users': [{'name': 'bot', 'lock_passwd': True, 'sudo': [], 'ssh_authorized_keys': [key]}],
                  'disable_root': True, 'ssh_pwauth': False,
-                 'packages': ['ubuntu-desktop-minimal', 'openssh-server', 'qemu-guest-agent'], 'package_update': True}
+                 'packages': ['ubuntu-desktop-minimal', 'openssh-server', 'qemu-guest-agent'], 'package_update': True,
+                 # Desktop's netplan renderer is NetworkManager, not networkd. Run after
+                 # package installation; retire only the obsolete renderer's online wait.
+                 'runcmd': [['systemctl', 'enable', '--now', 'NetworkManager.service'],
+                            ['systemctl', 'disable', '--now', 'systemd-networkd-wait-online.service'],
+                            ['systemctl', 'reset-failed', 'systemd-networkd-wait-online.service']]}
         (directory / 'user-data').write_text('#cloud-config\n' + json.dumps(cloud))
         (directory / 'meta-data').write_text(json.dumps({'instance-id': vm_id, 'local-hostname': 'pb-' + vm_id[:8]}))
         self.run(['cloud-localds', str(directory / 'seed.iso'), str(directory / 'user-data'), str(directory / 'meta-data')])

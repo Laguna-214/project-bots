@@ -80,7 +80,11 @@ class ComputeTests(unittest.TestCase):
         cloud = json.loads((disk.parent / 'user-data').read_text().split('\n', 1)[1])
         self.assertEqual(cloud['packages'], ['ubuntu-desktop-minimal', 'openssh-server', 'qemu-guest-agent'])
         self.assertTrue(cloud['ssh_pwauth'] is False)
-        self.assertNotIn('runcmd', cloud)
+        self.assertEqual(cloud.get('runcmd'), [
+            ['systemctl', 'enable', '--now', 'NetworkManager.service'],
+            ['systemctl', 'disable', '--now', 'systemd-networkd-wait-online.service'],
+            ['systemctl', 'reset-failed', 'systemd-networkd-wait-online.service'],
+        ])
         self.assertEqual(cloud['users'][0]['sudo'], [])
         self.assertEqual(self.backend().detail(vm['id'])['id'], vm['id'])
         self.assertTrue(all('qemu:///session' in c for c in self.calls if c[0] == 'virsh'))
