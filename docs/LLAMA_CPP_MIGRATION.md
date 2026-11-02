@@ -1,5 +1,26 @@
 # Shared inference: llama.cpp migration checkpoint
 
+## Current follow-up
+
+The historical browser blocker below is superseded: the user approved a one-time
+bounded root package installation through existing guest agents in the four named
+VMs. Exact verified Chrome installed with no package upgrades/removals. All four
+authenticated OpenClaw browser starts, offline controlled `about:blank` page
+snapshots and referenced clicks passed with sandbox enabled and roles unchanged.
+No private-network policy exception, host security edit, bot sudo or persistent
+root endpoint. [STAGE3_BROWSER_ADMIN_GATE.md](STAGE3_BROWSER_ADMIN_GATE.md) records
+actual challenges, sandbox/process/ownership and preserved identity readbacks.
+
+Stage 4 began only afterward. Actual official-SDK stdio MCP job
+`edae31ba-0bdc-419a-9653-be4a5a818032` executed retained OpenClaw `read` successfully;
+full suite now 91 discovered / 90 pass / 1 optional schema skip. Stage 4 is partial
+and paused at a bounded core checkpoint, without Hermes wiring or a new VM.
+See [STAGE4_MCP_CHECKPOINT.md](STAGE4_MCP_CHECKPOINT.md). No live quota/reset feed
+is available; no percentage, reset time or scheduled resume is invented.
+
+## Historical migration readback (before browser authorization)
+
+
 The four existing independent OpenClaw VMs now use **llama.cpp**, not Ollama. The managed Ollama services/binary trees and downloaded backend archive were removed **after real llama.cpp tool jobs passed**. All downloaded private model data is preserved. No root/sudo, host package/driver/group/AppArmor changes, VM replacement, cloud inference, Stage 4, Hermes changes, commit or push.
 
 ## Pinned runtime and model
@@ -46,6 +67,8 @@ Private evidence prefix `.../cache/scratch/stage3_llama_`: `pool_evidence.json`,
 ## Completion and remaining gate
 
 Real installed HTTP jobs on all four roles executed audited OpenClaw `session_status` or `read`; read challenges were absent from prompts and exact outputs matched. Concurrent dispatch receipts did not overlap; exact jobs/receipts survived installed platform restart. Model registry persistence after broker restart passed. Final job IDs and latest source/test/service readbacks are appended below after the final verification.
+
+**Fresh browser gate recheck:** authenticated OpenClaw start still fails and all four guests have neither a supported system browser nor an installed Chromium snap. The existing vendor-path AppArmor rule is not launch evidence. Exact proposed bounded administrator packaging mechanism and acceptance boundary: [STAGE3_BROWSER_ADMIN_GATE.md](STAGE3_BROWSER_ADMIN_GATE.md). No privileged installation was attempted; Stage 4 remains stopped.
 
 **Browser remains blocked, unchanged:** user-local Chrome cannot start with its sandbox under current root-owned guest policy. No sandbox disabling, guest sudo, userns/AppArmor workaround or new browser acceptance is claimed. Full Stage 3 is still open on that separate administrator-owned guest browser prerequisite. See historical `STAGE3_GPU_POOL_ACCEPTANCE.md` for the precise browser evidence. No new VMs, role broadening, autonomous executor or Stage 4.
 

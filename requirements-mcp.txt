@@ -1,0 +1,3 @@
+# Optional stdio MCP server/client; baseline platform has no third-party dependencies.
+# Official modelcontextprotocol/python-sdk, verified against this release.
+mcp==2.3.0

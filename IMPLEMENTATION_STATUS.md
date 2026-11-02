@@ -1,6 +1,49 @@
 # Implementation status
 
-## Current: Ollama removed; llama.cpp Vulkan inference and four-worker tool checkpoint
+## Current: Stage 3 browser passed; Stage 4 real MCP core checkpoint / paused
+
+The user explicitly approved one-time **fixed guest-agent root Chrome packaging**
+inside the four existing VMs only. Exact SHA-256-pinned Chrome 156.0.8078.79-1 was
+transferred through ordinary SSH, copied to root-only staging and hashed before
+parsing/installing. All four simulated/actual transactions: **0 upgraded, 1 newly
+installed, 0 removed**. Browser/sandbox helper root ownership verified. No host
+root/security change, bot sudo or permanent root command endpoint.
+
+All four authenticated OpenClaw browser starts and offline controlled-page
+navigation → random-challenge snapshot → referenced click → matching snapshot
+passed, with sandbox enabled, renderer seccomp/NoNewPrivs and no `--no-sandbox`.
+Loopback HTTP/data navigation policy remained restrictive; the controlled page
+used `about:blank` plus an offline DOM fixture, not a private-network exception.
+All non-browser config objects/roles/credentials/models and original VM boot IDs
+are preserved; Programmer/HomelabEngineer still deny the model browser access.
+Details/evidence: [docs/STAGE3_BROWSER_ADMIN_GATE.md](docs/STAGE3_BROWSER_ADMIN_GATE.md).
+Stage 3's isolated sandboxed browser gate is closed on that explicit basis.
+
+Only then began Stage 4: official-SDK **2.3.0 stdio MCP**, 17 narrow structured
+tools backed by supported authenticated APIs, typed intent/operation IDs and no
+shell/root tool. Actual MCP initialize/list/call → installed platform → existing
+Researcher → retained successful OpenClaw `read` job
+**`edae31ba-0bdc-419a-9653-be4a5a818032`** passed; exact job/receipt readback through
+a fresh MCP process and wrong-token/confirmation refusal passed. Full tests:
+**91 discovered, 90 passed, 1 optional schema skip**; Node syntax/dashboard
+confirmation contracts and whitespace checks pass.
+
+**Stage 4 remains partial and checkpointed** per subscription-budget steering:
+no reliable quota percentage/reset metadata is available; no guessed 10% claim,
+blind resume schedule or polling. Real disposable VM lifecycle via MCP and parent
+Hermes-native connection wiring remain unverified. No new disposable, Hermes
+configuration, Stage 5, commit or push. Exact supported tools, launch/credential
+contract, private evidence and bounded next steps:
+[docs/STAGE4_MCP_CHECKPOINT.md](docs/STAGE4_MCP_CHECKPOINT.md).
+
+## Previous: browser packaging administrator gate (superseded)
+
+
+At clean baseline `cc7ac9f`, the actual **authenticated Researcher OpenClaw browser start** still fails `No supported browser found`. Fresh inventory of **all four preserved guests** finds no system Chrome/Chromium executable and no installed Chromium snap. Ubuntu Desktop did not supply a browser. Researcher's existing root-owned Chrome AppArmor rule names the standard vendor path and permits userns; this may support a normal package install but is not proof of a usable sandbox. No binary relocation/confinement workaround, sandbox disabling, privileged access, VM replacement or policy change was attempted.
+
+**Blocked on explicit guest-administrator approval/access, not GPU.** Exact bounded, hash-pinned administrator package mechanism, approval wording and required per-profile navigation/snapshot acceptance: **[docs/STAGE3_BROWSER_ADMIN_GATE.md](docs/STAGE3_BROWSER_ADMIN_GATE.md)**. It is proposed, not executed. Fresh default tests: **86 discovered, 85 pass, 1 optional schema skip**; Stage 3 llama/inference/platform and Stage 2 platform active; all four observed boot identities preserved. **Stage 3 remains incomplete; Stage 4 MCP deliberately not started.** No commit/push or Hermes changes.
+
+## Previous: Ollama removed; llama.cpp Vulkan inference and four-worker tool checkpoint
 
 Shared inference now uses unmodified official **llama.cpp b12058** Vulkan on RX 6800: pinned release SHA-256 verified, **29/29 layers offloaded**, 1123.71 MiB model + 3584 MiB KV on Vulkan0, nonzero AMD hardware VRAM readback. Preserved GGUF hash verified; all four existing OpenClaw configs validated using native **openai-completions / llamacpp**, no fallback. Managed Ollama binaries, archive and live units were deleted after successful replacement jobs; original model blobs/manifests and every VM/key/workspace are preserved.
 
