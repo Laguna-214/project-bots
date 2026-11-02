@@ -63,7 +63,7 @@ class CliTests(unittest.TestCase):
             try:
                 listening = web.stdout.readline()
                 token_line = web.stdout.readline()
-                self.assertIn('Bootstrap access token', token_line)
+                self.assertRegex(token_line, r'^Setup pairing code \(expires in 10 minutes\): [0-9]{8}\n$')
                 port = int(listening.split(':')[-1].split()[0])
                 conn = http.client.HTTPConnection('127.0.0.1', port, timeout=3)
                 conn.request('GET', '/')
@@ -81,7 +81,7 @@ class WebTests(unittest.TestCase):
         from project_bots.web import make_handler
         from project_bots.config import load_config
         with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {'PROJECT_BOTS_CONFIG': str(Path(d) / 'config.json')}):
-            server = ThreadingHTTPServer(('127.0.0.1', 0), make_handler('secret-token'))
+            server = ThreadingHTTPServer(('127.0.0.1', 0), make_handler('12345678'))
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             port = server.server_port
@@ -96,14 +96,29 @@ class WebTests(unittest.TestCase):
             try:
                 status, hdr, html = request('GET', '/')
                 self.assertEqual(status, 200)
-                self.assertNotIn('secret-token', html)
+                self.assertNotIn('12345678', html)
                 self.assertNotIn('id="api_key"', html.lower())
                 self.assertIn('Content-Security-Policy', hdr)
                 self.assertIn('<script src="/setup.js"></script>', html)
-                self.assertEqual(request('GET', '/setup.js')[0], 200)
+                self.assertIn('8-digit', html)
+                status, _, script = request('GET', '/setup.js')
+                self.assertEqual(status, 200)
+                self.assertIn("api('/api/pair'", script)
                 self.assertEqual(request('GET', '/api/session')[0], 403)
-                auth = {'Authorization': 'Bearer secret-token', 'Origin': origin, 'X-Setup-Origin': origin}
-                self.assertEqual(request('GET', '/api/session', {'Authorization': 'Bearer secret-token', 'Origin': 'http://evil.test'})[0], 403)
+                pairing_headers = {'Origin': origin, 'X-Setup-Origin': origin, 'Content-Type': 'application/json'}
+                pair_body = json.dumps({'code': '12345678'})
+                self.assertEqual(request('POST', '/api/pair', {'Content-Type': 'application/json'}, pair_body)[0], 403)
+                self.assertEqual(request('POST', '/api/pair', dict(pairing_headers, Host='evil.test'), pair_body)[0], 403)
+                self.assertEqual(request('POST', '/api/pair', pairing_headers, json.dumps({'code': '00000000'}))[0], 403)
+                status, _, body = request('POST', '/api/pair', pairing_headers, pair_body)
+                self.assertEqual(status, 200)
+                session_token = json.loads(body)['token']
+                self.assertGreaterEqual(len(session_token), 32)
+                self.assertNotEqual(session_token, '12345678')
+                self.assertEqual(request('POST', '/api/pair', pairing_headers, pair_body)[0], 403)
+                auth = {'Authorization': 'Bearer ' + session_token, 'Origin': origin, 'X-Setup-Origin': origin}
+                self.assertEqual(request('GET', '/api/session', {'Authorization': 'Bearer 12345678', 'Origin': origin, 'X-Setup-Origin': origin})[0], 403)
+                self.assertEqual(request('GET', '/api/session', {'Authorization': 'Bearer ' + session_token, 'Origin': 'http://evil.test'})[0], 403)
                 self.assertEqual(request('GET', '/api/session', dict(auth, Host='evil.test'))[0], 403)
                 status, _, body = request('GET', '/api/session', auth)
                 self.assertEqual(status, 200)

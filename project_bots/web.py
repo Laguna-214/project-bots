@@ -1,10 +1,12 @@
-"""LAN configuration UI; bootstrap token stays in process memory."""
+"""LAN configuration UI; short console code exchanges once for a strong session token."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
 import ipaddress
 import json
 from pathlib import Path
 import secrets
+import threading
+import time
 from urllib.parse import urlsplit
 
 from .cli import codex_status
@@ -14,8 +16,13 @@ HTML = (Path(__file__).with_name('setup.html')).read_bytes()
 SCRIPT = (Path(__file__).with_name('setup.js')).read_bytes()
 
 
-def make_handler(token):
+def make_handler(code, ttl_seconds=600):
     csrf = secrets.token_urlsafe(32)
+    pairing_code = code
+    deadline = time.monotonic() + ttl_seconds
+    session_token = None
+    attempts = 0
+    pair_lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -51,12 +58,17 @@ def make_handler(token):
             except (ValueError, TypeError):
                 return False
 
-        def authorized(self):
+        def same_origin(self, require_origin=False):
             host = self.headers.get('Host', '')
+            origin = 'http://' + host
             return (self.allowed_host() and
-                    self.headers.get('X-Setup-Origin') == 'http://' + host and
-                    self.headers.get('Origin', 'http://' + host) == 'http://' + host and
-                    hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + token))
+                    self.headers.get('X-Setup-Origin') == origin and
+                    self.headers.get('Origin', None if require_origin else origin) == origin)
+
+        def authorized(self):
+            provided = self.headers.get('Authorization', '')
+            return (self.same_origin() and session_token is not None and
+                    hmac.compare_digest(provided, 'Bearer ' + session_token))
 
         def do_GET(self):
             if not self.allowed_host():
@@ -77,10 +89,36 @@ def make_handler(token):
                 self.json_response(404, {'error': 'Not found'})
 
         def do_POST(self):
+            nonlocal pairing_code, session_token, attempts
+            if self.path == '/api/pair':
+                if not self.same_origin(require_origin=True):
+                    self.json_response(403, {'error': 'Forbidden'})
+                    return
+                try:
+                    length = int(self.headers.get('Content-Length', '0'))
+                    if self.headers.get('Content-Type') != 'application/json' or not 0 < length <= 128:
+                        raise ValueError
+                    submitted = json.loads(self.rfile.read(length))
+                    candidate = submitted.get('code') if isinstance(submitted, dict) else None
+                except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                    candidate = None
+                with pair_lock:
+                    if attempts >= 5:
+                        self.json_response(429, {'error': 'Too many attempts. Restart setup for a new code.'})
+                    elif pairing_code is None or time.monotonic() >= deadline:
+                        self.json_response(403, {'error': 'Code expired or already used. Restart setup.'})
+                    elif not isinstance(candidate, str) or not hmac.compare_digest(candidate, pairing_code):
+                        attempts += 1
+                        self.json_response(403, {'error': 'Invalid code'})
+                    else:
+                        pairing_code = None
+                        session_token = secrets.token_urlsafe(32)
+                        self.json_response(200, {'token': session_token})
+                return
             if self.path != '/api/config':
                 self.json_response(404, {'error': 'Not found'})
                 return
-            if not self.authorized() or not hmac.compare_digest(self.headers.get('X-CSRF-Token', ''), csrf):
+            if not self.same_origin(require_origin=True) or not self.authorized() or not hmac.compare_digest(self.headers.get('X-CSRF-Token', ''), csrf):
                 self.json_response(403, {'error': 'Forbidden'})
                 return
             try:
@@ -98,10 +136,11 @@ def make_handler(token):
 
 
 def serve(host='0.0.0.0', port=8032):
-    token = secrets.token_urlsafe(32)
-    with ThreadingHTTPServer((host, port), make_handler(token)) as server:
+    code = f'{secrets.randbelow(100_000_000):08d}'
+    with ThreadingHTTPServer((host, port), make_handler(code)) as server:
         print(f'Setup listening on http://{host}:{server.server_port} (open using your server LAN IP)', flush=True)
-        print('Bootstrap access token (this run only): ' + token, flush=True)
+        print('Setup pairing code (expires in 10 minutes): ' + code, flush=True)
+        print('The code works once; five wrong attempts lock setup until restart.', flush=True)
         print('Only use on a trusted LAN. Never enter API keys in this page. Ctrl-C to stop.', flush=True)
         try:
             server.serve_forever()
