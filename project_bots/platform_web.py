@@ -76,11 +76,18 @@ def make_platform_handler(code, service, ttl_seconds=600):
                         result, status = create(data), 201
                 elif 5 <= len(parts) <= 7 and parts[1:3] == ['api', 'machines']:
                     result, status = service.compute_request(parts[3], method, '/'.join(parts[4:]), data), 200
+                elif len(parts) == 6 and parts[1:3] == ['api', 'agents'] and parts[4:] == ['worker', 'health'] and method == 'GET':
+                    from .service import identifier
+                    identifier(parts[3])
+                    result, status = service.check_worker_identity(service.repository.worker(parts[3])), 200
                 elif len(parts) == 5 and parts[1:3] == ['api', 'agents'] and parts[4] == 'worker':
                     from .service import identifier
                     identifier(parts[3])
                     result = service.repository.worker(parts[3]) if method == 'GET' else service.register_worker(parts[3], data)
                     status = 200
+                elif self.path == '/api/roles' and method == 'GET':
+                    from .workers import role_presets
+                    result, status = role_presets(), 200
                 elif self.path == '/api/workers' and method == 'GET':
                     result, status = service.list('workers'), 200
                 elif self.path in ('/api/models', '/api/models/loaded') and method == 'GET':
@@ -102,6 +109,8 @@ def make_platform_handler(code, service, ttl_seconds=600):
                     self.json_response(404, {'error': 'Not found'})
                     return
                 self.json_response(status, result)
+            except TimeoutError:
+                self.json_response(503, {'error': 'Inference admission deadline exceeded before dispatch; job remains queued'})
             except ComputeUnavailable:
                 self.json_response(503, {'error': 'Compute unavailable or outcome uncertain; inspect operation before retrying'})
             except ConflictError as exc:

@@ -137,6 +137,10 @@ class InstalledPlatformTests(unittest.TestCase):
         self.assertIn('/cancel', script)
         self.assertIn('/assign', script)
         self.assertIn('sessionStorage.setItem', script)
+        self.assertNotIn('registered (no worker)', script)
+        self.assertNotIn('No worker runtime, inference', html)
+        self.assertNotIn('Cancel this job? No worker will be signaled in Stage 1.', script)
+        self.assertTrue({'worker-form', 'dispatch-form', 'execution-form', 'model-form', 'worker-output', 'model-output'} <= parsed.ids)
         self.assertIn('width=device-width', html)
 
     def test_machine_api_settings_and_browser_guards(self):
@@ -329,7 +333,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(self.path.parent.stat().st_mode & 0o777, 0o700)
         import sqlite3
         with closing(sqlite3.connect(self.path)) as db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 2)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 3)
 
     def test_stage_one_database_migrates_without_losing_registry_and_jobs(self):
         import sqlite3
@@ -340,6 +344,7 @@ class RepositoryTests(unittest.TestCase):
         agent = service.create_agent({'name': 'Existing worker', 'role': 'analyst', 'machine_id': machine['id']})
         job = service.create_job({'title': 'Existing job', 'input': 'Keep me', 'agent_id': agent['id']})
         with closing(sqlite3.connect(self.path)) as db:
+            db.execute('DROP TABLE inference_admission')
             db.execute('DROP TABLE executions')
             db.execute('DROP TABLE workers')
             db.execute('PRAGMA user_version = 1')
@@ -350,6 +355,6 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(migrated.list('jobs'), [job])
         self.assertEqual(migrated.list('workers'), [])
         with closing(sqlite3.connect(self.path)) as db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 2)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 3)
             self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(), [])
         self.assertEqual(PlatformService(SQLiteRepository(self.path)).list('jobs'), [job])

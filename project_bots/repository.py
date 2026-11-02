@@ -18,7 +18,7 @@ class SQLiteRepository:
         os.close(fd)
         with self.transaction() as db:
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if version > 2:
+            if version > 3:
                 raise ValueError('Database schema is newer than this program')
             if version == 0:
                 db.execute('CREATE TABLE machines (id TEXT PRIMARY KEY, data TEXT NOT NULL)')
@@ -30,6 +30,9 @@ class SQLiteRepository:
                 db.execute('CREATE TABLE workers (agent_id TEXT PRIMARY KEY REFERENCES agents(id), vm_id TEXT NOT NULL UNIQUE, data TEXT NOT NULL)')
                 db.execute('CREATE TABLE executions (job_id TEXT PRIMARY KEY REFERENCES jobs(id), data TEXT NOT NULL)')
                 db.execute('PRAGMA user_version = 2')
+            if version < 3:
+                db.execute('CREATE TABLE inference_admission (sequence INTEGER PRIMARY KEY AUTOINCREMENT, ticket TEXT UNIQUE NOT NULL, priority INTEGER NOT NULL, memory_mib INTEGER NOT NULL, state TEXT NOT NULL, deadline REAL NOT NULL)')
+                db.execute('PRAGMA user_version = 3')
 
     @contextmanager
     def transaction(self):
@@ -124,6 +127,12 @@ class SQLiteRepository:
             row = db.execute('SELECT data FROM executions WHERE job_id=?', (job_id,)).fetchone()
             return json.loads(row[0]) if row else None
 
+    def assert_worker_idle(self, agent_id):
+        from .service import ConflictError
+        with self.transaction() as db:
+            if db.execute("SELECT 1 FROM executions WHERE json_extract(data,'$.agent_id')=? AND json_extract(data,'$.status') IN ('running','uncertain')", (agent_id,)).fetchone():
+                raise ConflictError('Worker is busy or needs reconciliation')
+
     def begin_execution(self, job_id, worker):
         import time
         from .service import ConflictError
@@ -153,6 +162,37 @@ class SQLiteRepository:
             db.execute('UPDATE executions SET data=? WHERE job_id=?',(json.dumps(receipt),job_id))
             db.execute('UPDATE jobs SET data=? WHERE id=?',(json.dumps(job),job_id))
             return job
+
+    def admission_enqueue(self, ticket, memory_mib, priority, deadline, queue_limit):
+        import time
+        with self.transaction() as db:
+            db.execute("DELETE FROM inference_admission WHERE state='queued' AND deadline<=?", (time.time(),))
+            if db.execute("SELECT count(*) FROM inference_admission WHERE state='queued'").fetchone()[0] >= queue_limit:
+                raise ValueError('Inference queue exceeded')
+            db.execute("INSERT INTO inference_admission(ticket,priority,memory_mib,state,deadline) VALUES(?,?,?,'queued',?)", (ticket, priority, memory_mib, deadline))
+
+    def admission_acquire(self, ticket, memory_mib, concurrency):
+        import time
+        with self.transaction() as db:
+            db.execute("DELETE FROM inference_admission WHERE state='queued' AND deadline<=?", (time.time(),))
+            first = db.execute("SELECT ticket,memory_mib FROM inference_admission WHERE state='queued' ORDER BY priority,sequence LIMIT 1").fetchone()
+            active, reserved = db.execute("SELECT count(*),coalesce(sum(memory_mib),0) FROM inference_admission WHERE state IN ('active','uncertain')").fetchone()
+            if first and first['ticket'] == ticket and active < concurrency and reserved + first['memory_mib'] <= memory_mib:
+                db.execute("UPDATE inference_admission SET state='active' WHERE ticket=?", (ticket,))
+                return True
+            return False
+
+    def admission_release(self, ticket, uncertain=False):
+        with self.transaction() as db:
+            if uncertain:
+                db.execute("UPDATE inference_admission SET state='uncertain' WHERE ticket=?", (ticket,))
+            else:
+                db.execute('DELETE FROM inference_admission WHERE ticket=?', (ticket,))
+
+    def admission_pending(self):
+        import time
+        with self.transaction() as db:
+            return db.execute("SELECT count(*) FROM inference_admission WHERE state='queued' AND deadline>?", (time.time(),)).fetchone()[0]
 
     def list(self, collection):
         queries = {'machines': 'SELECT data FROM machines ORDER BY rowid', 'agents': 'SELECT data FROM agents ORDER BY rowid', 'jobs': 'SELECT data FROM jobs ORDER BY rowid', 'workers': 'SELECT data FROM workers ORDER BY rowid'}

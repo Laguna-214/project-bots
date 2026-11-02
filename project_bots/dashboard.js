@@ -70,7 +70,7 @@ function renderJobs(jobs) {
       }));
     }
     if (['queued', 'running'].includes(job.status)) tools.append(action('Cancel job', async () => {
-      if (confirm('Cancel this job? No worker will be signaled in Stage 1.')) {
+      if (confirm('Cancel this queued/manual job? Dispatched jobs cannot be canceled remotely and will be refused; a timeout does not stop inference.')) {
         await api('/api/jobs/' + job.id + '/cancel', {});
         await refresh();
       }
@@ -88,14 +88,17 @@ function registry(id, rows, detail) {
   });
 }
 async function refresh() {
-  const [newAgents, machines, jobs, settings] = await Promise.all([
-    api('/api/agents'), api('/api/machines'), api('/api/jobs'), api('/api/settings')]);
+  const [newAgents, machines, jobs, settings, workers] = await Promise.all([
+    api('/api/agents'), api('/api/machines'), api('/api/jobs'), api('/api/settings'), api('/api/workers')]);
   agents = newAgents;
   $('system-status').textContent = 'API connected · ' + agents.length + ' registered agents · ' + machines.length + ' unverified machines · ' + jobs.filter(j => j.status === 'queued').length + ' queued / ' + jobs.filter(j => j.status === 'running').length + ' running reports · refreshed ' + new Date().toLocaleTimeString();
   options($('agent-machine'), machines, 'No machine assigned');
   options($('compute-machine'), machines, 'Select a compute service');
   options($('job-agent'), agents, 'Unassigned');
-  registry('agents', agents, a => a.role + ' · registered (no worker)' + (a.machine_id ? ' · machine assigned' : ''));
+  registry('agents', agents, a => {
+    const worker = workers.find(w => w.agent_id === a.id);
+    return a.role + ' · ' + (worker ? 'worker ' + worker.status + ' (last registration observation; use fresh health check)' : 'definition only') + (a.machine_id ? ' · machine assigned' : '');
+  });
   registry('machines', machines, m => m.endpoint + ' · unverified');
   renderJobs(jobs);
   $('inference-endpoint').value = settings.inference_endpoint;
@@ -181,6 +184,43 @@ for (const [id, route] of [['compute-health', 'health'], ['compute-list', 'vms']
   });
 }
 form('operation-form', async data => { showCompute(await api(computePath('operations/' + data.operation_id))); });
+form('worker-form', async data => {
+  const {agent_id, vm_id, endpoint, credential_env, model, identity_endpoint} = data;
+  const profile = {model};
+  for (const key of ['context', 'temperature', 'max_output', 'memory_mib', 'priority']) profile[key] = Number(data[key]);
+  const expected = 'configure:' + agent_id;
+  if (prompt('Bind this worker. A supplied identity endpoint must verify its running compute VM, Gateway and deployed profile before saving. Type ' + expected) !== expected) throw new Error('Not confirmed; no operation sent.');
+  const payload = {vm_id, endpoint, credential_env, profile};
+  if (identity_endpoint) payload.identity_endpoint = identity_endpoint;
+  $('worker-output').textContent = JSON.stringify(await api('/api/agents/' + agent_id + '/worker', payload), null, 2);
+});
+form('worker-health-form', async data => {
+  $('worker-output').textContent = JSON.stringify(await api('/api/agents/' + data.agent_id + '/worker/health'), null, 2);
+});
+form('dispatch-form', async data => {
+  const expected = 'dispatch:' + data.job_id;
+  if (prompt('Run this job on its configured real worker. No automatic retry or remote cancellation. Type ' + expected) !== expected) throw new Error('Not confirmed; no operation sent.');
+  $('worker-output').textContent = 'Dispatch pending for ' + data.job_id + '. Inspect execution after connection errors; do not replay.';
+  $('worker-output').textContent = JSON.stringify(await api('/api/jobs/' + data.job_id + '/dispatch', {confirmation: expected}), null, 2);
+});
+form('execution-form', async data => {
+  $('worker-output').textContent = JSON.stringify(await api('/api/jobs/' + data.job_id + '/execution'), null, 2);
+});
+form('model-form', async data => {
+  const payload = {model: data.model};
+  if (data.action !== 'show') {
+    const expected = data.action + ':' + data.model;
+    if (prompt('Change the shared local model daemon. Type ' + expected) !== expected) throw new Error('Not confirmed; no operation sent.');
+    payload.confirmation = expected;
+  }
+  $('model-output').textContent = JSON.stringify(await api('/api/models/' + data.action, payload), null, 2);
+});
+for (const [id, path] of [['models-list', '/api/models'], ['models-loaded', '/api/models/loaded'], ['workers-list', '/api/workers'], ['roles-list', '/api/roles']]) {
+  $(id).addEventListener('click', async () => {
+    try { $(id === 'workers-list' || id === 'roles-list' ? 'worker-output' : 'model-output').textContent = JSON.stringify(await api(path), null, 2); }
+    catch (error) { message(error.message, true); }
+  });
+}
 $('vm-create-operation').value = operationUUID();
 $('vm-action-operation').value = operationUUID();
 const lastCompute = sessionStorage.getItem('project-bots-last-compute-operation');

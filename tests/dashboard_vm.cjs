@@ -1,5 +1,7 @@
 // Browser logic contract with a fake DOM/HTTP, not visual or real-VM acceptance.
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
+const html = fs.readFileSync('project_bots/dashboard.html','utf8');
+assert(!html.includes('CPU-only real-worker acceptance'), 'Dashboard must not hardcode a stale CPU-only deployment status');
 const nodes = new Map(), calls = [], storage = new Map();
 function node(id) {
   if (!nodes.has(id)) nodes.set(id, {value:'', data:{}, handlers:{}, disabled:false,
@@ -31,5 +33,31 @@ vm.runInContext(fs.readFileSync('project_bots/dashboard.js','utf8'),context);
   assert.equal(calls[0].body.confirmation,approval);
   assert.equal(calls[0].body.operation_id,id);
   assert(!('cpus' in calls[0].body));
-  console.log('VM dashboard confirmation contract passed');
+  assert(node('worker-form').handlers.submit, 'Worker registration must be wired');
+  assert(node('dispatch-form').handlers.submit, 'Real dispatch must be wired');
+  assert(node('model-form').handlers.submit, 'Model manager must be wired');
+  approval = null;
+  node('dispatch-form').data = {job_id:id};
+  await node('dispatch-form').handlers.submit({preventDefault(){},currentTarget:node('dispatch-form')});
+  assert.equal(calls.length,1, 'Canceled dispatch must not send');
+  approval = 'dispatch:' + id;
+  await node('dispatch-form').handlers.submit({preventDefault(){},currentTarget:node('dispatch-form')});
+  assert.equal(calls[1].path, '/api/jobs/' + id + '/dispatch');
+  assert.equal(calls[1].body.confirmation,approval);
+  approval = null;
+  node('model-form').data = {action:'delete', model:'qwen3:1.7b'};
+  await node('model-form').handlers.submit({preventDefault(){},currentTarget:node('model-form')});
+  assert.equal(calls.length,2, 'Canceled model mutation must not send');
+  approval = 'delete:qwen3:1.7b';
+  await node('model-form').handlers.submit({preventDefault(){},currentTarget:node('model-form')});
+  assert.equal(calls[2].path, '/api/models/delete');
+  assert.equal(calls[2].body.confirmation,approval);
+  assert(node('roles-list').handlers.click, 'Role presets must be inspectable');
+  await node('roles-list').handlers.click();
+  assert.equal(calls[3].path, '/api/roles');
+  assert(node('worker-health-form').handlers.submit, 'Worker identity health check must be wired');
+  node('worker-health-form').data = {agent_id:id};
+  await node('worker-health-form').handlers.submit({preventDefault(){},currentTarget:node('worker-health-form')});
+  assert.equal(calls[4].path, '/api/agents/' + id + '/worker/health');
+  console.log('VM and Stage3 dashboard confirmation contracts passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

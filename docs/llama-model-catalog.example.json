@@ -1,0 +1,16 @@
+{
+  "smollm2-135m": {
+    "url": "https://huggingface.co/ggml-org/SmolLM2-135M-GGUF/resolve/1076b85d135017971845b19b8d07df1479155988/SmolLM2-135M-Q4_K_M.gguf",
+    "sha256": "e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5",
+    "size": 101016128,
+    "context": 2048,
+    "capabilities": ["completion"],
+    "model_info": {
+      "general.architecture": "llama",
+      "llama.block_count": 30,
+      "llama.attention.head_count_kv": 3,
+      "llama.attention.key_length": 64,
+      "llama.attention.value_length": 64
+    }
+  }
+}

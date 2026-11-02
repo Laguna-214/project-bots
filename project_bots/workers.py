@@ -20,17 +20,48 @@ def gateway_run(worker, job):
         return json.loads(raw)
 
 
-def worker_config(profile):
+def role_presets():
+    """Fresh source-owned presets; these never provision VMs or grant host access."""
+    presets = {
+        'ProjectWorker': {'instructions': 'Implement and test authorized project tasks inside this independent non-sudo VM. Do not assume access to other workers or management. Report concrete evidence. No cloud fallback.', 'allow': ['read', 'write', 'edit', 'apply_patch', 'exec', 'process', 'session_status'], 'deny': ['browser', 'gateway', 'nodes', 'message']},
+        'Researcher': {'instructions': 'Research the supplied question, distinguish evidence from inference and cite sources. Do not publish, message, change infrastructure or use credentials without explicit authorization. No cloud fallback.', 'allow': ['read', 'web_fetch', 'browser', 'session_status'], 'deny': ['write', 'edit', 'apply_patch', 'exec', 'process', 'gateway', 'nodes', 'message']},
+        'Reviewer': {'instructions': 'Review supplied workspace artifacts read-only. Identify defects and missing tests with evidence. Do not modify files, run commands or change infrastructure. No cloud fallback.', 'allow': ['read', 'session_status'], 'deny': ['write', 'edit', 'apply_patch', 'exec', 'process', 'browser', 'gateway', 'nodes', 'message']},
+        'HomelabObserver': {'instructions': 'Analyze explicitly supplied homelab reports read-only. Only workspace report files are available; no live homelab credentials or remote command access are granted. Never change services, VMs, security policy, groups, devices, network or storage. Report observations and propose changes for separate human approval. No cloud fallback.', 'allow': ['read', 'session_status'], 'deny': ['write', 'edit', 'apply_patch', 'exec', 'process', 'browser', 'gateway', 'nodes', 'message']},
+    }
+    import copy
+    presets['Programmer'] = copy.deepcopy(presets['ProjectWorker'])
+    presets['HomelabEngineer'] = copy.deepcopy(presets['HomelabObserver'])
+    return presets
+
+
+def canonical_role(role):
+    return {'Programmer': 'ProjectWorker', 'HomelabEngineer': 'HomelabObserver'}.get(role, role)
+
+
+def role_instructions(role):
+    try:
+        return role_presets()[canonical_role(role)]['instructions']
+    except (KeyError, TypeError):
+        raise ValueError('Unknown role preset') from None
+
+
+def worker_config(profile, role=None):
     p = model_profile(profile)
-    return {
+    config = {
         'gateway': {'mode': 'local', 'bind': 'loopback', 'port': 18789, 'auth': {'mode': 'token'},
                     'http': {'endpoints': {'responses': {'enabled': True, 'files': {'allowUrl': False}, 'images': {'allowUrl': False}}}}},
-        'models': {'providers': {'ollama': {'baseUrl': 'http://127.0.0.1:11434', 'apiKey': 'ollama-local', 'api': 'ollama',
+        'models': {'providers': {'llamacpp': {'baseUrl': 'http://127.0.0.1:11434/v1', 'apiKey': 'private-broker-required', 'api': 'openai-completions',
             'models': [{'id': p['model'], 'name': p['model'], 'contextWindow': p['context'], 'maxTokens': p['max_output'],
-                        'params': {'num_ctx': p['context'], 'temperature': p['temperature'], 'thinking': False}}]}}},
-        'agents': {'defaults': {'workspace': '~/.openclaw/workspace', 'model': {'primary': 'ollama/'+p['model'], 'fallbacks': []},
+                        'params': {'temperature': p['temperature']}}]}}},
+        'agents': {'defaults': {'workspace': '~/.openclaw/workspace', 'model': {'primary': 'llamacpp/'+p['model'], 'fallbacks': []},
             'skipBootstrap': True, 'maxConcurrent': 1, 'timeoutSeconds': 240}},
         'browser': {'enabled': True, 'headless': True, 'defaultProfile': 'openclaw'},
-        'tools': {'profile': 'minimal', 'agentToAgent': {'enabled': False}, 'elevated': {'enabled': False}},
+        'tools': {'profile': 'minimal', 'toolSearch': False, 'agentToAgent': {'enabled': False}, 'elevated': {'enabled': False}},
         'discovery': {'mdns': {'mode': 'off'}}
     }
+    if role is not None:
+        role_instructions(role)  # Validate before constructing a privileged tool surface.
+        preset = role_presets()[canonical_role(role)]
+        config['tools'].update(profile='full', allow=preset['allow'], deny=preset['deny'], fs={'workspaceOnly': True})
+        config['browser']['enabled'] = 'browser' in preset['allow']
+    return config

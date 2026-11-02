@@ -1,4 +1,4 @@
-"""Platform rules and explicit compute adapter; no inference or worker execution."""
+"""Platform rules, explicit compute operations and verified local worker execution."""
 import re
 import uuid
 from urllib.parse import urlsplit
@@ -61,8 +61,8 @@ class ConflictError(Exception):
 class PlatformService:
     def __init__(self, repository):
         self.repository = repository
-        from .models import Admission
-        self.admission = Admission()
+        from .models import DurableAdmission
+        self.admission = DurableAdmission(repository)
 
     def create_machine(self, data):
         fields(data, ('name', 'endpoint', 'credential_env'), ('name', 'endpoint'))
@@ -170,13 +170,45 @@ class PlatformService:
         from .models import model_profile
         from .machine_client import MachineClient
         identifier(agent_id)
-        fields(data, ('vm_id', 'endpoint', 'credential_env', 'profile'), ('vm_id', 'endpoint', 'credential_env', 'profile'))
+        fields(data, ('vm_id', 'endpoint', 'credential_env', 'profile', 'identity_endpoint'), ('vm_id', 'endpoint', 'credential_env', 'profile'))
         if identifier(data['vm_id']) is None:
             raise ValueError('VM UUID required')
         # Validate transport without resolving or contacting the configured host.
         MachineClient(data['endpoint'], 'validation-only-' + '0123456789abcdef'*3)
-        return self.repository.save_worker({'agent_id': agent_id, 'vm_id': data['vm_id'], 'endpoint': data['endpoint'],
-            'credential_env': env_reference(data['credential_env']), 'profile': model_profile(data['profile']), 'status': 'configured'})
+        worker = {'agent_id': agent_id, 'vm_id': data['vm_id'], 'endpoint': data['endpoint'],
+            'credential_env': env_reference(data['credential_env']), 'profile': model_profile(data['profile']), 'status': 'configured'}
+        if data.get('identity_endpoint'):
+            MachineClient(data['identity_endpoint'], 'validation-only-' + '0123456789abcdef'*3)
+            worker['identity_endpoint'] = data['identity_endpoint']
+            worker['health'] = self.check_worker_identity(worker)
+            worker['status'] = 'verified'
+        return self.repository.save_worker(worker)
+
+    def check_worker_identity(self, worker):
+        import os,time
+        from .machine_client import MachineClient
+        agent = next((a for a in self.repository.list('agents') if a['id'] == worker['agent_id']), None)
+        if not agent or not agent['machine_id'] or not worker.get('identity_endpoint'):
+            raise ConflictError('Assign a compute machine and configure authenticated worker identity before real dispatch')
+        vm = self.compute_request(agent['machine_id'], 'GET', 'vms/' + worker['vm_id'])
+        if vm.get('id') != worker['vm_id'] or vm.get('state') != 'running':
+            raise ConflictError('Worker VM identity or running state is not verified by compute')
+        token = os.environ.get(worker['credential_env'], '')
+        observation = MachineClient(worker['identity_endpoint'], token).request('GET', '/v1/health')
+        try:
+            valid = (observation['vm_id'] == worker['vm_id'] and identifier(observation['boot_id']) is not None
+                and observation['status'] == 'healthy' and abs(time.time() - observation['observed_at']) <= 30
+                and observation['gateway_authenticated'] is True and observation['native_llamacpp'] is True
+                and observation['cloud_fallback'] is False
+                and all(observation[key] == worker['profile'][key] for key in ('model','context','temperature','max_output')))
+            if not valid:
+                raise ConflictError('Worker identity, freshness or deployed model profile mismatch')
+            gateway = MachineClient(worker['endpoint'], token).request('GET', '/v1/models')
+            if not any(m.get('id') == 'openclaw/default' for m in gateway['data']):
+                raise ConflictError('Configured Gateway is not authenticated and ready')
+        except (KeyError, TypeError, ValueError, AttributeError):
+            raise ConflictError('Worker identity observation is incomplete or invalid') from None
+        return {key: observation[key] for key in ('vm_id', 'boot_id', 'status', 'observed_at', 'model', 'context', 'temperature', 'max_output', 'gateway_authenticated', 'native_llamacpp', 'cloud_fallback')}
 
     def dispatch_job(self, job_id, data, runner=None):
         fields(data, ('confirmation',), ('confirmation',))
@@ -185,11 +217,61 @@ class PlatformService:
             raise ValueError('Explicit dispatch confirmation required')
         job = self.repository.get_job(job_id)
         worker = self.repository.worker(job['agent_id'])
-        if runner is None:
+        self.repository.assert_worker_idle(worker['agent_id'])
+        real_gateway = runner is None
+        if real_gateway:
             from .workers import gateway_run
             runner = gateway_run
-        with self.admission.slot(worker['profile']['memory_mib'], worker['profile']['priority']):
-            return self._dispatch_admitted(job_id, worker, runner)
+        with self.admission.slot(worker['profile']['memory_mib'], worker['profile']['priority']) as lease:
+            if real_gateway:
+                self.check_worker_model(worker)
+                self.check_worker_identity(worker)
+            try:
+                result = self._dispatch_admitted(job_id, worker, runner)
+                if self.repository.execution(job_id)['status'] == 'uncertain':
+                    lease.retain()
+                return result
+            except BaseException:
+                # Failed receipt persistence/read cannot prove remote work stopped.
+                lease.retain()
+                receipt = self.repository.execution(job_id)
+                if not receipt or receipt['status'] not in ('running', 'uncertain'):
+                    lease.uncertain = False
+                raise
+
+    def check_worker_model(self, worker):
+        import os
+        from .models import ModelManager, NativeClient, memory_required_mib
+        from .compute import ComputeUnavailable
+        address = os.environ.get('PROJECT_BOTS_LLAMA_ENDPOINT')
+        if not address:
+            raise ValueError('Configure the private shared model endpoint before real dispatch')
+        manager = ModelManager(NativeClient(address, token_env=os.environ.get('PROJECT_BOTS_LLAMA_TOKEN_ENV')).request)
+        profile = worker['profile']
+        try:
+            inventory = manager.tags()['models']
+            model = next((m for m in inventory if m.get('name') == profile['model']), None)
+            if model is None:
+                raise ValueError('Assigned local model is not installed; no automatic pull or fallback')
+            details = manager.show(profile['model'])
+            if 'tools' not in details.get('capabilities', []):
+                raise ValueError('Assigned model has no verified native tool capability')
+            loaded = manager.loaded()['models']
+            matching = [m for m in loaded if m.get('name') == profile['model']]
+            if any(m.get('context_length') != profile['context'] for m in matching):
+                raise ValueError('Loaded model context differs from the worker profile')
+            required = memory_required_mib(details.get('model_info'), model.get('size'), profile['context'], max((m.get('size', 0) for m in matching), default=0))
+            other_bytes = [m.get('size') for m in loaded if m.get('name') != profile['model']]
+            if any(type(size) is not int or size <= 0 for size in other_bytes):
+                raise ValueError('Loaded model memory observation unavailable')
+            required += (sum(other_bytes) * 5 // 4 + 1024**2 - 1) // 1024**2
+            if required > profile['memory_mib']:
+                raise ValueError('Worker reservation cannot cover model weights, context cache and headroom')
+            return {'required_mib': required, 'reserved_mib': profile['memory_mib']}
+        except OSError:
+            raise ComputeUnavailable('Model preflight unavailable; no remote job dispatched') from None
+        except (KeyError, TypeError, AttributeError):
+            raise ValueError('Model resource observation is incomplete; no remote job dispatched') from None
 
     def _dispatch_admitted(self, job_id, worker, runner):
         job = self.repository.begin_execution(job_id, worker)
@@ -209,26 +291,30 @@ class PlatformService:
         import os
         from .models import ModelManager, NativeClient, local_model
         from .compute import ComputeUnavailable
-        if action not in ('tags', 'loaded', 'show', 'pull', 'delete'):
+        if action not in ('tags', 'loaded', 'show', 'pull', 'delete', 'unload', 'load'):
             raise ValueError('Unknown model operation')
-        if action in ('show', 'pull', 'delete'):
+        if action in ('show', 'pull', 'delete', 'unload', 'load'):
             fields(data, ('model', 'confirmation') if action != 'show' else ('model',), ('model',))
             name = local_model(data['model'])
             if action != 'show' and data.get('confirmation') != action + ':' + name:
                 raise ValueError('Explicit model confirmation required')
             if action == 'delete' and any(w['profile']['model'] == name for w in self.repository.list('workers')):
                 raise ConflictError('Model is assigned to a worker')
-        address = os.environ.get('PROJECT_BOTS_OLLAMA_ENDPOINT')
+        address = os.environ.get('PROJECT_BOTS_LLAMA_ENDPOINT')
         if not address:
-            raise ValueError('Configure a private Ollama endpoint in service environment')
-        manager = ModelManager(NativeClient(address).request)
+            raise ValueError('Configure a private llama.cpp broker endpoint in service environment')
+        manager = ModelManager(NativeClient(address, token_env=os.environ.get('PROJECT_BOTS_LLAMA_TOKEN_ENV')).request)
         try:
             if action in ('tags', 'loaded'):
                 return getattr(manager, action)()
             if action == 'show':
                 return manager.show(name)
-            with self.admission.slot(8192, 50):
-                return getattr(manager, action)(name)
+            with self.admission.slot(8192, 50) as lease:
+                try:
+                    return getattr(manager, action)(name)
+                except BaseException:
+                    lease.retain()
+                    raise
         except (OSError, ValueError):
             raise ComputeUnavailable('Local model service unavailable; inspect before retrying model mutations') from None
 
