@@ -48,6 +48,79 @@ class MCPProtocolTests(unittest.TestCase):
             self.assertEqual(calls[-1], ('GET', '/api/jobs/' + job + '/execution', None))
         anyio.run(exercise)
 
+    def test_cancel_job_uses_existing_state_guarded_route(self):
+        from project_bots.mcp_server import create_server
+        calls = []
+        class Client:
+            def request(self, method, path, data=None):
+                calls.append((method, path, data)); return {'status': 'canceled'}
+        async def exercise():
+            server = create_server(Client())
+            job = '11111111-1111-4111-8111-111111111111'
+            result = await server.call_tool('cancel_job', {'job_id': job})
+            self.assertFalse(result.is_error)
+            self.assertEqual(calls, [('POST', '/api/jobs/' + job + '/cancel', {})])
+        anyio.run(exercise)
+
+    def test_agent_registration_is_metadata_not_worker_start(self):
+        from project_bots.mcp_server import create_server
+        calls = []
+        class Client:
+            def request(self, method, path, data=None):
+                calls.append((method, path, data)); return {'status': 'registered'}
+        async def exercise():
+            server = create_server(Client())
+            await server.call_tool('register_agent', {'name': 'test', 'role': 'Researcher', 'model': 'local-model'})
+            self.assertEqual(calls, [('POST', '/api/agents', {'name': 'test', 'role': 'Researcher', 'machine_id': None, 'config': {'model': 'local-model'}})])
+        anyio.run(exercise)
+
+    def test_worker_profile_binding_and_role_inventory_use_existing_api(self):
+        from project_bots.mcp_server import create_server
+        calls = []
+        class Client:
+            def request(self, method, path, data=None):
+                calls.append((method, path, data)); return {} if method == 'POST' else []
+        async def exercise():
+            server = create_server(Client())
+            aid = '11111111-1111-4111-8111-111111111111'
+            vm = '22222222-2222-4222-8222-222222222222'
+            args = dict(agent_id=aid, vm_id=vm, endpoint='http://127.0.0.1:1234', credential_env='WORKER_TOKEN', model='local-model', context=4096, temperature=0.2, max_output=512, memory_mib=8192, priority=50)
+            await server.call_tool('configure_worker', args)
+            self.assertEqual(calls[-1], ('POST', '/api/agents/' + aid + '/worker', {'vm_id': vm, 'endpoint': args['endpoint'], 'credential_env': 'WORKER_TOKEN', 'profile': {k: args[k] for k in ('model', 'context', 'temperature', 'max_output', 'memory_mib', 'priority')}}))
+            await server.call_tool('list_roles', {})
+            self.assertEqual(calls[-1], ('GET', '/api/roles', None))
+        anyio.run(exercise)
+
+    def test_token_file_rejects_unsafe_files_without_exposing_secret(self):
+        import tempfile
+        from project_bots.mcp_server import read_token_file
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'token'
+            token = secrets.token_urlsafe(48)
+            path.write_text(token + '\n'); path.chmod(0o600)
+            self.assertEqual(read_token_file(path), token)
+            for mode in (0o644, 0o660, 0o400):
+                path.chmod(mode)
+                with self.assertRaises(ValueError) as caught:
+                    read_token_file(path)
+                self.assertNotIn(token, str(caught.exception))
+            path.chmod(0o600)
+            link = Path(directory) / 'link'; link.symlink_to(path)
+            with self.assertRaises(ValueError): read_token_file(link)
+            with self.assertRaises(ValueError): read_token_file(directory)
+            path.write_text('short')
+            with self.assertRaises(ValueError): read_token_file(path)
+
+    def test_undispatched_execution_absence_is_structured_not_sdk_error(self):
+        from project_bots.mcp_server import create_server
+        class Client:
+            def request(self, method, path, data=None): return None
+        async def exercise():
+            result = await create_server(Client()).call_tool('get_job_execution', {'job_id': '11111111-1111-4111-8111-111111111111'})
+            self.assertFalse(result.is_error)
+            self.assertEqual(result.structured_content, {'execution': None})
+        anyio.run(exercise)
+
     def test_job_creation_and_assignment_only_supported_fields(self):
         from project_bots.mcp_server import create_server
         calls = []
@@ -142,8 +215,20 @@ class MCPProtocolTests(unittest.TestCase):
                     result = await session.call_tool('list_workers', {})
                     self.assertFalse(result.is_error)
                     self.assertEqual(result.structured_content, {'workers': [{'agent_id': 'fixture-worker', 'status': 'verified'}]})
-        try:
-            anyio.run(exercise)
-            self.assertEqual(seen, [('/api/workers', 'Bearer ' + token)])
-        finally:
-            server.shutdown(); server.server_close(); thread.join()
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            token_file = Path(directory) / 'token'
+            token_file.write_text(token); token_file.chmod(0o600)
+            async def exercise_file():
+                params = StdioServerParameters(command=sys.executable, args=['-m', 'project_bots.mcp_server', '--endpoint', f'http://127.0.0.1:{server.server_port}', '--token-file', str(token_file)], cwd=ROOT)
+                async with stdio_client(params) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        result = await session.call_tool('list_workers', {})
+                        self.assertFalse(result.is_error)
+            try:
+                anyio.run(exercise)
+                anyio.run(exercise_file)
+                self.assertEqual(seen, [('/api/workers', 'Bearer ' + token)] * 2)
+            finally:
+                server.shutdown(); server.server_close(); thread.join()

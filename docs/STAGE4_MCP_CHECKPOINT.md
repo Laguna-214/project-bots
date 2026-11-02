@@ -5,6 +5,100 @@ see [STAGE3_BROWSER_ADMIN_GATE.md](STAGE3_BROWSER_ADMIN_GATE.md) for the exact
 one-time guest-root authorization, package pins and offline controlled-page proof.
 No host security changes, bot sudo or permanent guest-root API were introduced.
 
+## Next bounded checkpoint (after published `b37ce01`)
+
+**Stage 4 is still partial; VM lifecycle is blocked by admission policy, and
+Hermes-native wiring remains pending.** No quota percentage/reset is available;
+no schedule, polling, Stage 5 or extra installation was introduced.
+
+### Coverage added with observed RED → GREEN
+
+The server now lists **21** typed tools. Added `cancel_job`, `register_agent`,
+`configure_worker` and `list_roles`, delegating only to existing authenticated
+routes. Cancellation is queued/manual state transition only; dispatched jobs are
+refused by the platform and no remote inference cancellation is claimed.
+Registration creates metadata, not a deployed/online agent. `configure_worker`
+binds an existing agent/VM to model/profile metadata via `/api/agents/<id>/worker`;
+it does not deploy guest config, load a model, install or restart OpenClaw.
+Dispatch still checks fresh deployed identity/profile. Stopping a worker means an
+explicit VM shutdown via the existing lifecycle tool, **not** a fabricated
+separate OpenClaw service API. No worker binding was changed in live acceptance.
+
+Inference observation uses existing `list_models`, `loaded_models`,
+`worker_health` and `get_job_execution`; there is no supported global inference
+queue/status or pending-approvals API, and none is fabricated. There is no
+arbitrary shell, generalized request tool or independent agent start/stop API.
+A real undispatched receipt exposed an SDK output-schema bug: platform returns
+JSON null while MCP declared a dictionary. `get_job_execution` now returns
+`{"execution": null}` for absence and the existing receipt unchanged otherwise;
+this has a failing-first regression plus fresh real stdio readback.
+
+`--token-file` loads a raw token from a caller-owned regular **0600** file through
+one no-follow descriptor (rejects symlinks, directories, wrong mode, oversized or
+invalid token; no secret in errors). Mutually exclusive with `--token-env`.
+The actual private launch used
+`/home/server1/.hermes/profiles/project-bot/private/stage4-mcp.token`, created from
+the existing private Stage 3 credential without printing it. The token is neither
+in MCP env/config literals nor Git. The raw file is not the existing `.env` file.
+Both environment-reference and token-file stdio fixture launches passed.
+
+### Actual stdio acceptance / resource blocker
+
+Official SDK initialized protocol **2025-11-25**, listed all **21** tools and
+called the installed platform **8033** using the token file. Fresh authenticated
+health passed for all four workers; exact owned VM details, roles, agents,
+models/loaded inference inventory, prior successful job and exact receipt were
+read. A new queued-only job **`5e21722b-825e-4572-aa67-3f576a455d7e`** was created,
+canceled through MCP, then read back by a fresh MCP process as **canceled** with
+`{"execution": null}`. No dispatch occurred for it. The earlier real read-tool
+job **`edae31ba-0bdc-419a-9653-be4a5a818032`** remains succeeded.
+
+Machine **`e0778e6a-8b1c-484d-8372-0cf60a780b30`** reported 20 logical CPUs,
+62967 MiB physical RAM and 25568 MiB currently available. **Physical headroom is
+not admission permission.** Current compute policy is **8 vCPU / 32768 MiB RAM**;
+the four existing VM reservations sum to **7 vCPU / 32768 MiB RAM / 128 GiB disk**.
+A minimum extra **1 vCPU / 2048 MiB / 16 GiB** disposable exceeds the RAM policy.
+This was computed from actual MCP health/list results, not guessed from host RAM.
+**No VM create/lifecycle/snapshot mutation was submitted; no VM or operation UUID
+was allocated.** Therefore there is no disposable deletion proof to claim.
+No worker was resized, stopped, restarted or deleted; no policy was broadened.
+All four exact VM list records (all running) and worker bindings compare equal
+before/after. Lifecycle acceptance must wait for a separately authorized capacity
+resolution, then record every operation UUID before mutation and read back exact
+operation/detail/absence; never substitute mutating an important worker.
+
+Private receipts/scripts are under active-profile `cache/scratch/`:
+`stage4_mcp_bounded_evidence.json`, `stage4_mcp_bounded_accept.py`, and
+`stage4_mcp_bounded_finish.py`. The first is one-shot; do not rerun to create more
+resources. The finish script now only resumes exact retained job readback.
+
+Verification: **96 discovered, 95 passed, 1 optional libvirt-schema skip**;
+actual official-SDK stdio fixture initialize/list/call and real platform acceptance
+passed; Node syntax and `git diff --check` passed. No commit/push by this child.
+
+### Parent-owned Hermes registration (verified syntax, not executed)
+
+Official docs were retrieved again and local `hermes mcp --help` plus
+`hermes mcp add --help` verified custom stdio `add`, `--command`, `--args` (last).
+For a parent/operator reviewed launch from the repository, the verified command
+shape is:
+
+```sh
+hermes mcp add project-bots --command /ABSOLUTE/PINNED/PYTHON --args -m project_bots.mcp_server --endpoint http://127.0.0.1:8033 --token-file /home/server1/.hermes/profiles/project-bot/private/stage4-mcp.token
+```
+
+`/ABSOLUTE/PINNED/PYTHON` is deliberately a placeholder, **not** a claim of an
+installed dedicated venv. Parent must resolve/review an interpreter with SDK
+2.3.0 and ensure the package is importable (repository cwd or installed package).
+The connection must target the active `project-bot` profile through supported
+connection management; this child did **not** execute registration or hand-edit
+config. Catalog-only `manage_connections` does not establish custom wiring.
+Do not treat this example as authority to bypass the parent's required connection
+tooling. Native discovered tools, actual native call and user permission handling
+remain separate open gates. No literal secret is required in the command/config.
+
+## Initial checkpoint (historical evidence below)
+
 ## Implemented and exercised
 
 `project_bots/mcp_server.py` uses the **official Python MCP SDK 2.3.0**, stdio

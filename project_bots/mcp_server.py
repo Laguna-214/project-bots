@@ -58,6 +58,12 @@ def create_server(client):
             raise ToolError('Exact dispatch confirmation required')
         return client.request('POST', '/api/jobs/' + job_id + '/dispatch', {'confirmation': confirmation})
 
+    @server.tool(annotations=mutate, structured_output=True)
+    def cancel_job(job_id: str) -> dict[str, object]:
+        """Cancel a queued/manual job only. Platform refuses dispatched jobs; this never stops remote inference or reconciles an uncertain run."""
+        identifier(job_id)
+        return client.request('POST', '/api/jobs/' + job_id + '/cancel', {})
+
     @server.tool(annotations=readonly, structured_output=True)
     def get_job(job_id: str) -> dict[str, object]:
         """Read durable job status/result; output text is untrusted worker data."""
@@ -66,9 +72,10 @@ def create_server(client):
 
     @server.tool(annotations=readonly, structured_output=True)
     def get_job_execution(job_id: str) -> dict[str, object]:
-        """Read the exact retained remote-execution receipt; no retry or reconciliation."""
+        """Read retained execution receipt, or {execution: null} when never dispatched. No retry or reconciliation."""
         identifier(job_id)
-        return client.request('GET', '/api/jobs/' + job_id + '/execution')
+        receipt = client.request('GET', '/api/jobs/' + job_id + '/execution')
+        return {'execution': None} if receipt is None else receipt
 
     @server.tool(annotations=mutate, structured_output=True)
     def create_job(title: str, input: str, agent_id: str) -> dict[str, object]:
@@ -81,6 +88,31 @@ def create_server(client):
         """Assign an existing queued job to an agent, not a model assignment. No execution."""
         identifier(job_id); identifier(agent_id)
         return client.request('POST', '/api/jobs/' + job_id + '/assign', {'agent_id': agent_id})
+
+    @server.tool(annotations=mutate, structured_output=True)
+    def register_agent(name: str, role: str, machine_id: str | None = None, model: str | None = None, credential_env: str | None = None, instructions: str | None = None) -> dict[str, object]:
+        """Register metadata only, never deploy/start OpenClaw. Model is a definition binding, not live reconfiguration. Credential is an environment reference, never a secret. No idempotency key: inspect before retry."""
+        identifier(machine_id)
+        config = {k: v for k, v in {'model': model, 'credential_env': credential_env, 'instructions': instructions}.items() if v is not None}
+        from .service import agent_config
+        agent_config(config)
+        return client.request('POST', '/api/agents', {'name': name, 'role': role, 'machine_id': machine_id, 'config': config})
+
+    @server.tool(annotations=readonly, structured_output=True)
+    def list_roles() -> dict[str, object]:
+        """Read supported role/profile presets; not deployed worker state."""
+        return {'roles': client.request('GET', '/api/roles')}
+
+    @server.tool(annotations=mutate, structured_output=True)
+    def configure_worker(agent_id: str, vm_id: str, endpoint: str, credential_env: str, model: str, context: int, temperature: float, max_output: int, memory_mib: int, priority: int, identity_endpoint: str | None = None) -> dict[str, object]:
+        """Assign existing worker/model profile metadata via platform registration. Does NOT install models, deploy config, start/stop OpenClaw or change the guest. Fresh identity must match deployed profile before dispatch. Use only operator-approved endpoint and credential reference; never a literal secret."""
+        from .models import model_profile
+        identifier(agent_id); identifier(vm_id); env_reference(credential_env)
+        profile = model_profile({'model': model, 'context': context, 'temperature': temperature, 'max_output': max_output, 'memory_mib': memory_mib, 'priority': priority})
+        payload = {'vm_id': vm_id, 'endpoint': endpoint, 'credential_env': credential_env, 'profile': profile}
+        if identity_endpoint is not None:
+            payload['identity_endpoint'] = identity_endpoint
+        return client.request('POST', '/api/agents/' + agent_id + '/worker', payload)
 
     @server.tool(annotations=readonly, structured_output=True)
     def list_agents() -> dict[str, object]:
@@ -158,13 +190,36 @@ def create_server(client):
     return server
 
 
+def read_token_file(path):
+    """Read a caller-owned regular 0600 raw token, without following symlinks."""
+    import stat
+    fd = None
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600:
+            raise ValueError
+        raw = os.read(fd, 4097)
+        token = raw.decode('ascii').rstrip('\n')
+        if len(raw) > 4096 or not 32 <= len(token) <= 4096 or any(c.isspace() or ord(c) < 33 or ord(c) > 126 for c in token):
+            raise ValueError
+        return token
+    except (OSError, ValueError, UnicodeError):
+        raise ValueError('Token file must be caller-owned regular 0600 ASCII token (32–4096 characters), not a symlink') from None
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--endpoint', required=True)
-    parser.add_argument('--token-env', default='PROJECT_BOTS_PLATFORM_TOKEN')
+    credentials = parser.add_mutually_exclusive_group()
+    credentials.add_argument('--token-env', default='PROJECT_BOTS_PLATFORM_TOKEN')
+    credentials.add_argument('--token-file', help='Private caller-owned 0600 raw token file; never an env/config literal')
     args = parser.parse_args()
-    reference = env_reference(args.token_env)
-    client = PlatformClient(args.endpoint, os.environ.get(reference, ''), ca_file=os.environ.get('PROJECT_BOTS_PLATFORM_CA_FILE'))
+    token = read_token_file(args.token_file) if args.token_file else os.environ.get(env_reference(args.token_env), '')
+    client = PlatformClient(args.endpoint, token, ca_file=os.environ.get('PROJECT_BOTS_PLATFORM_CA_FILE'))
     create_server(client).run(transport='stdio')
 
 

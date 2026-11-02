@@ -1,6 +1,37 @@
 # Implementation status
 
-## Current: Stage 3 browser passed; Stage 4 real MCP core checkpoint / paused
+## Current: Stage 4 bounded MCP coverage checkpoint; VM admission blocked
+
+Continued from published `b37ce01` with strict observed RED→GREEN slices. **21**
+real SDK tools now include queued/manual cancellation, metadata-only agent
+registration, existing worker model/profile binding and role inventory. Inference
+observation uses actual loaded-model/worker/receipt APIs; no invented approvals,
+remote-inference cancellation, agent service lifecycle or arbitrary shell.
+`--token-file` privately loads an owner-only regular 0600 raw credential without
+putting a literal key in MCP env/config. An actual null execution receipt exposed
+an SDK schema mismatch; a failing-first regression and real exact-job readback
+now prove explicit `{"execution": null}` for undispatched jobs.
+
+Actual fresh stdio initialize/list/call (protocol **2025-11-25**, all 21 tools)
+reached installed platform **8033**. All four authenticated worker health checks
+passed; before/after exact VM and worker records match. Queued-only MCP job
+**`5e21722b-825e-4572-aa67-3f576a455d7e`** was canceled and read back canceled with
+no execution; original read-tool job `edae31ba-0bdc-419a-9653-be4a5a818032` remains
+succeeded. **VM lifecycle is blocked before mutation:** actual policy RAM is
+32768 MiB and existing four reservations already sum to 32768 MiB (7/8 vCPU).
+Even a 1-vCPU/2048-MiB disposable cannot fit; physical available RAM does not
+supersede policy. No VM/operation UUID allocated, worker stopped/resized, capacity
+policy changed or snapshot attempted. Real create/start/shutdown/delete remains
+unverified pending separately authorized capacity resolution.
+
+**96 tests discovered, 95 passed, 1 optional schema skip**; Node syntax and
+`git diff --check` passed. No Hermes native connection/config change, Stage 5,
+schedule, invented quota reading, commit or push. Parent owns reviewed supported
+custom registration and native-call acceptance. Private evidence and verified
+CLI syntax: [docs/STAGE4_MCP_CHECKPOINT.md](docs/STAGE4_MCP_CHECKPOINT.md).
+Bounded checkpoint reached; extras frozen and paused.
+
+## Previous: Stage 3 browser passed; Stage 4 initial real MCP core checkpoint
 
 The user explicitly approved one-time **fixed guest-agent root Chrome packaging**
 inside the four existing VMs only. Exact SHA-256-pinned Chrome 156.0.8078.79-1 was
