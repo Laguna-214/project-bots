@@ -29,7 +29,14 @@ def main(argv=None):
     codex = sub.add_parser('codex', help='Official Codex CLI authentication')
     codex.add_argument('action', choices=['login', 'status'])
     sub.add_parser('update', help='Update from the official GitHub main branch')
+    platform = sub.add_parser('serve', help='Persistent Stage 1 workforce dashboard')
+    platform.add_argument('--host', default='127.0.0.1')
+    platform.add_argument('--port', type=int, default=8032)
     args = parser.parse_args(argv)
+    if args.command == 'serve':
+        from .platform_web import serve
+        serve(args.host, args.port)
+        return 0
     if args.command == 'setup' and args.mode == 'local':
         print('Providers: ' + ', '.join(PRESETS))
         try:

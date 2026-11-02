@@ -68,7 +68,11 @@ def make_handler(code, ttl_seconds=600):
         def authorized(self):
             provided = self.headers.get('Authorization', '')
             return (self.same_origin() and session_token is not None and
-                    hmac.compare_digest(provided, 'Bearer ' + session_token))
+                    hmac.compare_digest(provided.encode(), ('Bearer ' + session_token).encode()))
+
+        def authorized_write(self):
+            return (self.same_origin(require_origin=True) and self.authorized() and
+                    hmac.compare_digest(self.headers.get('X-CSRF-Token', '').encode(), csrf.encode()))
 
         def do_GET(self):
             if not self.allowed_host():
@@ -107,7 +111,7 @@ def make_handler(code, ttl_seconds=600):
                         self.json_response(429, {'error': 'Too many attempts. Restart setup for a new code.'})
                     elif pairing_code is None or time.monotonic() >= deadline:
                         self.json_response(403, {'error': 'Code expired or already used. Restart setup.'})
-                    elif not isinstance(candidate, str) or not hmac.compare_digest(candidate, pairing_code):
+                    elif not isinstance(candidate, str) or not candidate.isascii() or not hmac.compare_digest(candidate.encode(), pairing_code.encode()):
                         attempts += 1
                         self.json_response(403, {'error': 'Invalid code'})
                     else:
@@ -118,7 +122,7 @@ def make_handler(code, ttl_seconds=600):
             if self.path != '/api/config':
                 self.json_response(404, {'error': 'Not found'})
                 return
-            if not self.same_origin(require_origin=True) or not self.authorized() or not hmac.compare_digest(self.headers.get('X-CSRF-Token', ''), csrf):
+            if not self.authorized_write():
                 self.json_response(403, {'error': 'Forbidden'})
                 return
             try:
