@@ -18,7 +18,7 @@ class SQLiteRepository:
         os.close(fd)
         with self.transaction() as db:
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if version > 1:
+            if version > 2:
                 raise ValueError('Database schema is newer than this program')
             if version == 0:
                 db.execute('CREATE TABLE machines (id TEXT PRIMARY KEY, data TEXT NOT NULL)')
@@ -26,6 +26,10 @@ class SQLiteRepository:
                 db.execute('CREATE TABLE jobs (id TEXT PRIMARY KEY, agent_id TEXT REFERENCES agents(id), data TEXT NOT NULL)')
                 db.execute('CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK(id = 1), data TEXT NOT NULL)')
                 db.execute('PRAGMA user_version = 1')
+            if version < 2:
+                db.execute('CREATE TABLE workers (agent_id TEXT PRIMARY KEY REFERENCES agents(id), vm_id TEXT NOT NULL UNIQUE, data TEXT NOT NULL)')
+                db.execute('CREATE TABLE executions (job_id TEXT PRIMARY KEY REFERENCES jobs(id), data TEXT NOT NULL)')
+                db.execute('PRAGMA user_version = 2')
 
     @contextmanager
     def transaction(self):
@@ -88,14 +92,70 @@ class SQLiteRepository:
         # Validation and mutation happen under one write transaction; no read/claim race.
         try:
             with self.transaction() as db:
+                if db.execute('SELECT 1 FROM executions WHERE job_id=?', (job_id,)).fetchone():
+                    from .service import ConflictError
+                    raise ConflictError('Dispatched jobs require execution reconciliation; active cancellation is not implemented')
                 job = change(self._job(db, job_id))
                 db.execute('UPDATE jobs SET agent_id = ?, data = ? WHERE id = ?', (job['agent_id'], json.dumps(job), job_id))
                 return job
         except sqlite3.IntegrityError:
             raise ValueError('Unknown assigned agent') from None
 
+    def save_worker(self, worker):
+        from .service import ConflictError
+        try:
+            with self.transaction() as db:
+                if db.execute('SELECT 1 FROM executions WHERE json_extract(data,\'$.agent_id\') = ? AND json_extract(data,\'$.status\') IN (\'running\',\'uncertain\')', (worker['agent_id'],)).fetchone():
+                    raise ConflictError('Worker has an unresolved execution')
+                db.execute('INSERT INTO workers(agent_id, vm_id, data) VALUES(?,?,?) ON CONFLICT(agent_id) DO UPDATE SET vm_id=excluded.vm_id,data=excluded.data', (worker['agent_id'], worker['vm_id'], json.dumps(worker)))
+        except sqlite3.IntegrityError:
+            raise ValueError('Unknown agent or VM already assigned') from None
+        return worker
+
+    def worker(self, agent_id):
+        with self.transaction() as db:
+            row = db.execute('SELECT data FROM workers WHERE agent_id=?', (agent_id,)).fetchone()
+            if row is None:
+                raise LookupError('Worker not configured')
+            return json.loads(row[0])
+
+    def execution(self, job_id):
+        with self.transaction() as db:
+            row = db.execute('SELECT data FROM executions WHERE job_id=?', (job_id,)).fetchone()
+            return json.loads(row[0]) if row else None
+
+    def begin_execution(self, job_id, worker):
+        import time
+        from .service import ConflictError
+        with self.transaction() as db:
+            job = self._job(db, job_id)
+            if job['status'] != 'queued' or job['agent_id'] != worker['agent_id'] or db.execute('SELECT 1 FROM executions WHERE job_id=?', (job_id,)).fetchone():
+                raise ConflictError('Job cannot be dispatched again')
+            if db.execute('SELECT 1 FROM executions WHERE json_extract(data,\'$.agent_id\')=? AND json_extract(data,\'$.status\') IN (\'running\',\'uncertain\')', (worker['agent_id'],)).fetchone():
+                raise ConflictError('Worker is busy or needs reconciliation')
+            row = db.execute('SELECT data FROM workers WHERE agent_id=?', (worker['agent_id'],)).fetchone()
+            if row is None or json.loads(row[0]) != worker:
+                raise ConflictError('Worker configuration changed')
+            receipt = {'job_id':job_id, 'agent_id':worker['agent_id'], 'status':'running', 'started_at':time.time(), 'worker':worker}
+            db.execute('INSERT INTO executions VALUES (?,?)', (job_id,json.dumps(receipt)))
+            job['status'] = 'running'
+            db.execute('UPDATE jobs SET data=? WHERE id=?', (json.dumps(job),job_id))
+            return job
+
+    def finish_execution(self, job_id, status, result=None, response_id=None):
+        import time
+        with self.transaction() as db:
+            job = self._job(db,job_id)
+            receipt = json.loads(db.execute('SELECT data FROM executions WHERE job_id=?',(job_id,)).fetchone()[0])
+            receipt.update(status=status, finished_at=time.time(), response_id=response_id)
+            job.update(status='succeeded' if status=='succeeded' else 'failed', result=result if status=='succeeded' else None,
+                       error=None if status=='succeeded' else ('Gateway outcome uncertain; no automatic retry' if status=='uncertain' else 'Gateway did not complete the job'), progress=100 if status=='succeeded' else 0)
+            db.execute('UPDATE executions SET data=? WHERE job_id=?',(json.dumps(receipt),job_id))
+            db.execute('UPDATE jobs SET data=? WHERE id=?',(json.dumps(job),job_id))
+            return job
+
     def list(self, collection):
-        queries = {'machines': 'SELECT data FROM machines ORDER BY rowid', 'agents': 'SELECT data FROM agents ORDER BY rowid', 'jobs': 'SELECT data FROM jobs ORDER BY rowid'}
+        queries = {'machines': 'SELECT data FROM machines ORDER BY rowid', 'agents': 'SELECT data FROM agents ORDER BY rowid', 'jobs': 'SELECT data FROM jobs ORDER BY rowid', 'workers': 'SELECT data FROM workers ORDER BY rowid'}
         if collection not in queries:
             raise ValueError('Unknown collection')
         with self.transaction() as db:

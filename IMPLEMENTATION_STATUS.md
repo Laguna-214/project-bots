@@ -1,6 +1,16 @@
 # Implementation status
 
-## Current: Stage 2 runtime acceptance complete — parent review/publication pending
+## Current: Stage 3 partial real-worker checkpoint — NOT complete
+
+On 2026-11-02, resumed the interrupted Stage 3 changes without resetting the tree. The Stage 1/2 repository now migrates SQLite v1 to v2 (workers/executions), with a regression test preserving existing machine, agent and job rows. **55 tests discovered: 54 pass, 1 optional libvirt-schema skip**; Node syntax/dashboard contract and `git diff --check` pass. The new unit/API tests use fake transports; they are not a substitute for the following hardware evidence.
+
+The compute host currently has one **running** Stage 3 disposable VM `4accba4d-24c9-4942-aec9-fd54de816319` (4 vCPU, 8192 MiB, 32 GiB), not a Stage 2 leftover. The interrupted work installed OpenClaw 2026.10.9 and Node 24.22.2 inside that guest, with its own 0700 configuration/workspace, 0600 config/token, role file, browser enabled in config, and active user Gateway service; a live `openclaw config validate` passed. Management's stage3 SSH tunnels and compute host's Ollama service were active on readback. The local host model `qwen3:1.7b` is present; `/api/tags` advertises `tools`, and a **real native Ollama `/api/chat`** invocation returned a structured `checkpoint` tool call with `value: verified` (not text pretending to invoke a tool). This proves the model API path, not an OpenClaw browser tool end-to-end.
+
+**Real job proof:** using an isolated Stage 3 management DB, a registered agent/worker and explicit `dispatch:<job UUID>` confirmation, `PlatformService.dispatch_job` reached the VM's authenticated OpenClaw `/v1/responses` endpoint over loopback SSH forwarding, returned `Checkpoint-ok.`, and persisted `succeeded` plus response ID `resp_9d9d4501-753a-4559-a4ee-85a3dff7b5a0`; a fresh repository read returned `succeeded`. Job UUID `ddeef7aa-4ea9-4de3-8058-988c41cb7252`. The scratch acceptance script's final assertion initially failed solely because it compared the model's capitalized `Checkpoint-ok.` case-sensitively; the persisted success and readback were real, but the script itself did not exit zero. The assertion was corrected without replaying the job. This is a **CPU-only Ollama checkpoint**: the dedicated `pbcompute` service UID lacked read/write access to `/dev/kfd` and the AMD render node in the earlier probe; no GPU or policy change was made, and GPU acceleration is **not** claimed.
+
+**Remaining Stage 3 gates:** verify actual GPU/ROCm access under a separately approved least-privilege change rather than silently claiming acceleration; test tool execution through OpenClaw (not just Ollama's structured tool output); add authenticated installed-platform HTTP real-dispatch/restart acceptance (live Stage 2 platform process was not restarted or migrated); confirm VM identity/health against compute before registration, durable multi-process inference admission and timeout/cancellation semantics, and document recovery/rollback. Current `Admission` is single-process advisory memory reservation, not VRAM enforcement; a configured worker is not automatically verified as its VM; unresolved execution blocks re-dispatch. No Stage 4 Hermes/MCP changes. Preserve the running VM and its dedicated tunnels; do not create a duplicate. Scratch evidence/scripts reside under the active profile's `cache/scratch/stage3_*`, private credentials under its `private/`; neither is published. Do not print secrets.
+
+## Previous: Stage 2 runtime acceptance complete and published at 4fbb418
 
 Final clean-boot regression is fixed with TDD in the standard Ubuntu Desktop seed: fixed cloud-init runcmd enables NetworkManager, disables/stops only stale systemd-networkd-wait-online, and resets that exact unit's failure state after package installation. No arbitrary caller commands, broad failure reset, host privileged/security change or bot sudo/password change. Existing guests are not retrofitted.
 
@@ -109,7 +119,7 @@ No real browser visual review of the new Stage 2 UI is claimed; the existing Sta
 5. **Small trusted deployment only.** Single administrator, no RBAC/mTLS, pagination/retention, durable approval policy or public-facing DoS hardening. No custom networking, live snapshots, force-off/reset, disk shrinking, guest filesystem expansion or guest command API. No absolute CPU/RAM/disk quota guarantee against concurrent host activity.
 6. **Software delivery is not publication/deployment.** No commit/push/remote update/host install was performed; parent reviews and publishes separately. Update/uninstall preserves VM state/domains and requires manually stopping processes; it does not tear down host packages/users/firewall/tunnels.
 
-## Stages 3–5 — not implemented
+## Historical Stage 3–5 plan (superseded in part by current checkpoint)
 
 - **Stage 3:** per-VM OpenClaw worker runtime/bootstrap/identity, heartbeats, leases/claim ownership, results/cancellation and shared host Ollama integration with measured resource limits.
 - **Stage 4:** Hermes remains the user's assistant, later connected through narrow authenticated MCP operations. No Hermes configuration/plugin/service changes here.

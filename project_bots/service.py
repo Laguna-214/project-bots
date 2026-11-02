@@ -61,6 +61,8 @@ class ConflictError(Exception):
 class PlatformService:
     def __init__(self, repository):
         self.repository = repository
+        from .models import Admission
+        self.admission = Admission()
 
     def create_machine(self, data):
         fields(data, ('name', 'endpoint', 'credential_env'), ('name', 'endpoint'))
@@ -163,6 +165,72 @@ class PlatformService:
             raise ValueError('Configure a compute credential environment reference')
         client = MachineClient(machine['endpoint'], os.environ.get(reference, ''), os.environ.get('PROJECT_BOTS_MACHINE_CA_FILE'))
         return client.request(method, '/v1/' + route, data)
+
+    def register_worker(self, agent_id, data):
+        from .models import model_profile
+        from .machine_client import MachineClient
+        identifier(agent_id)
+        fields(data, ('vm_id', 'endpoint', 'credential_env', 'profile'), ('vm_id', 'endpoint', 'credential_env', 'profile'))
+        if identifier(data['vm_id']) is None:
+            raise ValueError('VM UUID required')
+        # Validate transport without resolving or contacting the configured host.
+        MachineClient(data['endpoint'], 'validation-only-' + '0123456789abcdef'*3)
+        return self.repository.save_worker({'agent_id': agent_id, 'vm_id': data['vm_id'], 'endpoint': data['endpoint'],
+            'credential_env': env_reference(data['credential_env']), 'profile': model_profile(data['profile']), 'status': 'configured'})
+
+    def dispatch_job(self, job_id, data, runner=None):
+        fields(data, ('confirmation',), ('confirmation',))
+        identifier(job_id)
+        if data['confirmation'] != 'dispatch:' + job_id:
+            raise ValueError('Explicit dispatch confirmation required')
+        job = self.repository.get_job(job_id)
+        worker = self.repository.worker(job['agent_id'])
+        if runner is None:
+            from .workers import gateway_run
+            runner = gateway_run
+        with self.admission.slot(worker['profile']['memory_mib'], worker['profile']['priority']):
+            return self._dispatch_admitted(job_id, worker, runner)
+
+    def _dispatch_admitted(self, job_id, worker, runner):
+        job = self.repository.begin_execution(job_id, worker)
+        try:
+            response = runner(worker, job)
+        except Exception:
+            return self.repository.finish_execution(job_id, 'uncertain')
+        try:
+            output = '\n'.join(part['text'] for item in response['output'] if item.get('type') == 'message' for part in item.get('content', []) if part.get('type') == 'output_text')
+            if response['status'] != 'completed' or not output.strip() or len(output) > 16000:
+                return self.repository.finish_execution(job_id, 'failed', response_id=response.get('id'))
+            return self.repository.finish_execution(job_id, 'succeeded', text(output,16000,multiline=True), response.get('id'))
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return self.repository.finish_execution(job_id, 'uncertain')
+
+    def model_request(self, action, data=None):
+        import os
+        from .models import ModelManager, NativeClient, local_model
+        from .compute import ComputeUnavailable
+        if action not in ('tags', 'loaded', 'show', 'pull', 'delete'):
+            raise ValueError('Unknown model operation')
+        if action in ('show', 'pull', 'delete'):
+            fields(data, ('model', 'confirmation') if action != 'show' else ('model',), ('model',))
+            name = local_model(data['model'])
+            if action != 'show' and data.get('confirmation') != action + ':' + name:
+                raise ValueError('Explicit model confirmation required')
+            if action == 'delete' and any(w['profile']['model'] == name for w in self.repository.list('workers')):
+                raise ConflictError('Model is assigned to a worker')
+        address = os.environ.get('PROJECT_BOTS_OLLAMA_ENDPOINT')
+        if not address:
+            raise ValueError('Configure a private Ollama endpoint in service environment')
+        manager = ModelManager(NativeClient(address).request)
+        try:
+            if action in ('tags', 'loaded'):
+                return getattr(manager, action)()
+            if action == 'show':
+                return manager.show(name)
+            with self.admission.slot(8192, 50):
+                return getattr(manager, action)(name)
+        except (OSError, ValueError):
+            raise ComputeUnavailable('Local model service unavailable; inspect before retrying model mutations') from None
 
     def list(self, collection):
         return self.repository.list(collection)

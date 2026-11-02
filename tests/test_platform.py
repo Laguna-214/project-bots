@@ -329,4 +329,27 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(self.path.parent.stat().st_mode & 0o777, 0o700)
         import sqlite3
         with closing(sqlite3.connect(self.path)) as db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 1)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 2)
+
+    def test_stage_one_database_migrates_without_losing_registry_and_jobs(self):
+        import sqlite3
+        from project_bots.repository import SQLiteRepository
+        from project_bots.service import PlatformService
+        service = PlatformService(SQLiteRepository(self.path))
+        machine = service.create_machine({'name': 'Existing', 'endpoint': 'https://compute.lan:9443'})
+        agent = service.create_agent({'name': 'Existing worker', 'role': 'analyst', 'machine_id': machine['id']})
+        job = service.create_job({'title': 'Existing job', 'input': 'Keep me', 'agent_id': agent['id']})
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute('DROP TABLE executions')
+            db.execute('DROP TABLE workers')
+            db.execute('PRAGMA user_version = 1')
+            db.commit()
+        migrated = PlatformService(SQLiteRepository(self.path))
+        self.assertEqual(migrated.list('machines'), [machine])
+        self.assertEqual(migrated.list('agents'), [agent])
+        self.assertEqual(migrated.list('jobs'), [job])
+        self.assertEqual(migrated.list('workers'), [])
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 2)
+            self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(), [])
+        self.assertEqual(PlatformService(SQLiteRepository(self.path)).list('jobs'), [job])

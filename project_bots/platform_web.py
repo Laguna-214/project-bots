@@ -76,6 +76,21 @@ def make_platform_handler(code, service, ttl_seconds=600):
                         result, status = create(data), 201
                 elif 5 <= len(parts) <= 7 and parts[1:3] == ['api', 'machines']:
                     result, status = service.compute_request(parts[3], method, '/'.join(parts[4:]), data), 200
+                elif len(parts) == 5 and parts[1:3] == ['api', 'agents'] and parts[4] == 'worker':
+                    from .service import identifier
+                    identifier(parts[3])
+                    result = service.repository.worker(parts[3]) if method == 'GET' else service.register_worker(parts[3], data)
+                    status = 200
+                elif self.path == '/api/workers' and method == 'GET':
+                    result, status = service.list('workers'), 200
+                elif self.path in ('/api/models', '/api/models/loaded') and method == 'GET':
+                    result, status = service.model_request('loaded' if self.path.endswith('/loaded') else 'tags'), 200
+                elif len(parts) == 4 and parts[1:3] == ['api', 'models'] and method == 'POST':
+                    result, status = service.model_request(parts[3], data), 200
+                elif len(parts) == 5 and parts[1:3] == ['api', 'jobs'] and parts[4] == 'execution' and method == 'GET':
+                    result, status = service.repository.execution(parts[3]), 200
+                elif len(parts) == 5 and parts[1:3] == ['api', 'jobs'] and parts[4] == 'dispatch' and method == 'POST':
+                    result, status = service.dispatch_job(parts[3], data), 200
                 elif self.path == '/api/settings':
                     result = service.get_settings() if method == 'GET' else service.save_settings(data)
                     status = 200
