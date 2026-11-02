@@ -173,6 +173,15 @@ class ComputeTests(unittest.TestCase):
             backend.action(vm['id'], 'delete', {'confirmation': 'delete:' + vm['id'], 'operation_id': str(__import__('uuid').uuid4())})
         self.assertTrue(self.image.exists())
 
+    def test_guest_agent_package_has_matching_virtio_channel(self):
+        from xml.etree import ElementTree as ET
+        backend = self.backend(); vm = self.provision(backend)
+        xml = ET.fromstring(self.domains[vm['id']])
+        channel = xml.find("devices/channel/target[@name='org.qemu.guest_agent.0']")
+        self.assertIsNotNone(channel, 'Installed qemu-guest-agent requires its virtio transport')
+        self.assertEqual(channel.get('type'), 'virtio')
+        self.assertEqual(xml.find('devices/channel').get('type'), 'unix')
+
     def test_health_console_and_capacity_policy(self):
         backend = self.backend(); health = backend.health()
         self.assertEqual(health['libvirt_uri'], 'qemu:///session')

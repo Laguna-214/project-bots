@@ -268,6 +268,7 @@ class ComputeService:
         interface = add(devices, 'interface', type='user')
         add(interface, 'model', type='virtio'); add(interface, 'backend', type='passt')
         add(add(interface, 'portForward', proto='tcp', address='127.0.0.1'), 'range', start=str(vm['ssh_port']), to='22')
+        add(add(devices, 'channel', type='unix'), 'target', type='virtio', name='org.qemu.guest_agent.0')
         add(devices, 'graphics', type='spice', autoport='yes', listen='127.0.0.1')
         add(add(devices, 'video'), 'model', type='vga')
         return ET.tostring(root, encoding='unicode')

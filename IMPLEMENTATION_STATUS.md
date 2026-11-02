@@ -1,6 +1,16 @@
 # Implementation status
 
-## Checkpoint: Stages 1–2 software; real Stage 2 host acceptance PENDING
+## Current: compute deployed; real Stage 2 acceptance PARTIAL / BLOCKED
+
+On 2026-11-02 the authorized compute PC `10.0.50.56` was deployed as unprivileged `pbcompute` (UID 1001) from public Git revision `815f145975b91fae19697de68edcfc58a9929f74`. The enabled/active user service listens only on `127.0.0.1:9443`; management SSH tunnel endpoint is `http://127.0.0.1:19443`. Official Ubuntu 24.04 qcow2 signed checksums were verified against the host's package-installed Ubuntu cloud-image trust keyring. **No privileged package installation, sudo, GPU/Ollama change, commit or push was performed in this deployment.**
+
+Real disposable VM `9bc73046-7528-4d31-ba65-8b8e9029c5d1` completed create/start/inspect/pause/resume/graceful shutdown/offline resource growth/snapshot create+restore/delete. Readback confirms tombstone, empty libvirt/managed lists, no VM directory, and active service. **Guest SSH and cloud-init Desktop readiness FAILED:** no guest IPv4 lease; passt independently reproduces `Failed to add fd to epoll: Bad file descriptor` and leaves an orphan after guest shutdown. One failed repeat-start was preserved/reconciled locally against a stopped backup before cleanup. Root-level kernel/AppArmor diagnostics are required next; no security policy bypass was attempted. Restart/graphical session/live-operation negative cases remain unverified on hardware.
+
+A separate missing guest-agent transport was fixed with observed RED→GREEN regression test and actual libvirt definition/schema validation. Remote checkout contains the same uncommitted `compute.py`/test patch. **45 tests pass on compute including installed libvirt 12 schema; management default discovery is 44 pass + 1 optional schema skip.** Node syntax/dashboard contract and whitespace checks pass. Full evidence, exact operation IDs, deployment paths, tunnel handoff, and next administrator diagnostics: [docs/STAGE2_ACCEPTANCE.md](docs/STAGE2_ACCEPTANCE.md).
+
+The following is the **historical software checkpoint before compute access**, retained to distinguish its claims from the later deployment. Its pending/no-deployment statements do not describe the current deployment above.
+
+## Historical checkpoint: Stages 1–2 software; real host acceptance then PENDING
 
 Baseline for this change: public `main` **80fef4c**, Stage 1 with **22 passing tests**. No commit/push, host package/service installation, actual VM mutation, guessed-IP probe, Ollama change or Hermes environment configuration was performed in this checkpoint. Parent review/publication is separate.
 
