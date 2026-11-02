@@ -223,6 +223,23 @@ class ComputeTests(unittest.TestCase):
             backend.action(vm['id'], 'snapshot-create', {'snapshot': 'bad', 'confirmation': 'snapshot-create:' + vm['id'], 'operation_id': str(__import__('uuid').uuid4())})
         self.assertFalse(any(c[:2] == ['qemu-img', 'snapshot'] for c in self.calls))
 
+    def test_ram_cap_env_override_raises_policy_for_bounded_test(self):
+        """PROJECT_BOTS_COMPUTE_RAM_CAP raises the RAM policy cap when set; falls back on invalid."""
+        from project_bots.compute import ComputeService
+        from unittest.mock import patch
+        import os
+        backend = ComputeService(self.root / 'state', self.catalog, runner=self.runner)
+        known = {'cpu_count': 20, 'memory_total_mib': 62967, 'memory_available_mib': 25504, 'storage_free_gib': 816}
+        with patch.object(backend, 'host_resources', return_value=known):
+            self.assertEqual(backend.capacity()['ram_mib'], 32768)
+            with patch.dict(os.environ, {'PROJECT_BOTS_COMPUTE_RAM_CAP': '40960'}):
+                self.assertEqual(backend.capacity()['ram_mib'], 40960)
+            self.assertEqual(backend.capacity()['ram_mib'], 32768)
+            with patch.dict(os.environ, {'PROJECT_BOTS_COMPUTE_RAM_CAP': 'not-a-number'}):
+                self.assertEqual(backend.capacity()['ram_mib'], 32768)
+            with patch.dict(os.environ, {'PROJECT_BOTS_COMPUTE_RAM_CAP': '-1'}):
+                self.assertEqual(backend.capacity()['ram_mib'], 32768)
+
     def test_host_commands_timeout_and_errors_are_redacted(self):
         from project_bots.compute import run_command, ComputeUnavailable
         from unittest.mock import patch

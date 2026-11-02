@@ -75,8 +75,15 @@ class ComputeService:
 
     def capacity(self):
         host = self.host_resources()
+        cap = os.environ.get('PROJECT_BOTS_COMPUTE_RAM_CAP', '')
+        try:
+            ram_cap = int(cap)
+            if ram_cap < 2048:
+                raise ValueError
+        except ValueError:
+            ram_cap = 32768
         return {'cpus': min(8, max(0, host['cpu_count'] - 2)),
-                'ram_mib': min(32768, max(0, host['memory_total_mib'] - 8192)),
+                'ram_mib': min(ram_cap, max(0, host['memory_total_mib'] - 8192)),
                 'disk_gib': max(0, host['storage_free_gib'] - 10)}
 
     def reserve(self, requested, capacity=None, exclude=None):
