@@ -32,7 +32,24 @@ def main(argv=None):
     platform = sub.add_parser('serve', help='Persistent Stage 1 workforce dashboard')
     platform.add_argument('--host', default='127.0.0.1')
     platform.add_argument('--port', type=int, default=8032)
+    machine = sub.add_parser('machine-service', help='Dedicated authenticated session-libvirt compute service')
+    machine.add_argument('--host', default='127.0.0.1')
+    machine.add_argument('--port', type=int, default=9443)
+    machine.add_argument('--catalog', required=True, help='Trusted admin-local template catalog JSON')
+    machine.add_argument('--state-dir', required=True, help='Private dedicated compute state directory')
+    machine.add_argument('--token-env', default='PROJECT_BOTS_COMPUTE_TOKEN')
+    machine.add_argument('--tls-cert')
+    machine.add_argument('--tls-key')
     args = parser.parse_args(argv)
+    if args.command == 'machine-service':
+        from .machine_http import serve as machine_serve
+        try:
+            machine_serve(args.host, args.port, args.state_dir, args.catalog, args.token_env, args.tls_cert, args.tls_key)
+        except (ValueError, OSError) as exc:
+            # Validation errors are fixed messages, never submitted secrets.
+            print('Machine service could not start: ' + (str(exc) if isinstance(exc, ValueError) else 'check local files and listener'), file=sys.stderr)
+            return 1
+        return 0
     if args.command == 'serve':
         from .platform_web import serve
         serve(args.host, args.port)

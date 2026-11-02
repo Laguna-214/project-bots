@@ -93,6 +93,7 @@ async function refresh() {
   agents = newAgents;
   $('system-status').textContent = 'API connected · ' + agents.length + ' registered agents · ' + machines.length + ' unverified machines · ' + jobs.filter(j => j.status === 'queued').length + ' queued / ' + jobs.filter(j => j.status === 'running').length + ' running reports · refreshed ' + new Date().toLocaleTimeString();
   options($('agent-machine'), machines, 'No machine assigned');
+  options($('compute-machine'), machines, 'Select a compute service');
   options($('job-agent'), agents, 'Unassigned');
   registry('agents', agents, a => a.role + ' · registered (no worker)' + (a.machine_id ? ' · machine assigned' : ''));
   registry('machines', machines, m => m.endpoint + ' · unverified');
@@ -139,6 +140,51 @@ form('job-form', async data => {
 form('settings-form', async data => {
   await api('/api/settings', {...data, cloud_fallback: false}); await refresh();
 });
+function operationUUID() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+  const hex = Array.from(bytes, x => x.toString(16).padStart(2, '0')).join('');
+  return [hex.slice(0,8), hex.slice(8,12), hex.slice(12,16), hex.slice(16,20), hex.slice(20)].join('-');
+}
+function computePath(route) {
+  const machine = $('compute-machine').value;
+  if (!machine) throw new Error('Select a registered compute service.');
+  return '/api/machines/' + machine + '/' + route;
+}
+function showCompute(value) { $('compute-output').textContent = JSON.stringify(value, null, 2); }
+async function mutateVM(route, data, expected, operationInput) {
+  const approval = prompt('This changes a real VM. Type exactly ' + expected + ' to authorize this one action.');
+  if (approval !== expected) throw new Error('Not confirmed; no operation sent.');
+  // Preserve the ID on errors/timeouts. Retrying the same payload is idempotent.
+  data.confirmation = approval;
+  $('compute-output').textContent = 'Operation ' + data.operation_id + ' pending. Keep this ID; inspect before retrying after errors.';
+  sessionStorage.setItem('project-bots-last-compute-operation', JSON.stringify({machine: $('compute-machine').value, route, data}));
+  showCompute(await api(computePath(route), data));
+  $(operationInput).value = operationUUID();
+}
+form('vm-create-form', async data => {
+  for (const key of ['cpus', 'ram_mib', 'disk_gib']) data[key] = Number(data[key]);
+  await mutateVM('vms', data, 'create', 'vm-create-operation');
+});
+form('vm-action-form', async data => {
+  const {vm_id, action: verb, operation_id} = data;
+  const payload = {operation_id};
+  if (verb === 'resources') for (const key of ['cpus', 'ram_mib', 'disk_gib']) payload[key] = Number(data[key]);
+  if (verb.startsWith('snapshot-')) payload.snapshot = data.snapshot;
+  if (verb === 'detail') { showCompute(await api(computePath('vms/' + vm_id))); return; }
+  await mutateVM('vms/' + vm_id + '/' + verb, payload, verb + ':' + vm_id, 'vm-action-operation');
+});
+for (const [id, route] of [['compute-health', 'health'], ['compute-list', 'vms']]) {
+  $(id).addEventListener('click', async () => {
+    try { showCompute(await api(computePath(route))); }
+    catch (error) { message(error.message, true); }
+  });
+}
+form('operation-form', async data => { showCompute(await api(computePath('operations/' + data.operation_id))); });
+$('vm-create-operation').value = operationUUID();
+$('vm-action-operation').value = operationUUID();
+const lastCompute = sessionStorage.getItem('project-bots-last-compute-operation');
+if (lastCompute) $('compute-output').textContent = 'Previous request (inspect operation before retrying): ' + lastCompute;
 $('refresh').addEventListener('click', () => refresh().then(() => message('Refreshed.')).catch(e => message(e.message, true)));
 if (token) unlock().catch(() => {
   token = ''; csrf = ''; sessionStorage.removeItem('project-bots-session');

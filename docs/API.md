@@ -1,6 +1,6 @@
-# Stage 1 API
+# Platform and compute APIs (Stages 1–2 software)
 
-The stdlib HTTP server is a local administrative control plane, **not a worker or VM service**. Launch with `project-bots serve` (loopback `127.0.0.1:8032`), or explicitly `project-bots serve --host 0.0.0.0 --port 8032` on a trusted LAN. Use numeric private/loopback IPs or `localhost`; arbitrary DNS Host headers are rejected. IPv6 listening is not implemented. All endpoints below are exact paths (no trailing slash or query parameters).
+The platform server is a local administrative control plane with a narrowly scoped Stage 2 compute adapter, **not a worker runtime**. Launch with `project-bots serve` (loopback `127.0.0.1:8032`), or explicitly `project-bots serve --host 0.0.0.0 --port 8032` on a trusted LAN. Use numeric private/loopback IPs or `localhost`; arbitrary DNS Host headers are rejected. IPv6 listening is not implemented. All endpoints below are exact paths (no trailing slash or query parameters). The separate `machine-service` API is documented below; real host acceptance remains pending.
 
 ## Authentication
 
@@ -58,7 +58,7 @@ assert api(path)['status'] == 'succeeded'
 
 ## Endpoints and bodies
 
-JSON responses are objects except collection GETs, which return arrays. Creation returns `201`; reads, settings writes and job actions return `200`. API paths are authenticated except pairing. IDs are canonical UUID strings; optional references may be `null`. There is no delete, arbitrary SQL, subprocess, shell, host-probe or VM-execution endpoint.
+JSON responses are objects except collection GETs, which return arrays. Registry/job creation returns `201`; reads, settings writes and job actions return `200`. API paths are authenticated except pairing. IDs are canonical UUID strings; optional references may be `null`. Stage 1 routes below do not execute tasks; Stage 2 VM actions are a separate explicit boundary. No arbitrary SQL, commands, shell, client paths or XML are accepted.
 
 | Method | Path | Request / response |
 |---|---|---|
@@ -80,7 +80,7 @@ JSON responses are objects except collection GETs, which return arrays. Creation
 | GET | `/api/settings` | Platform settings object |
 | POST | `/api/settings` | Full replacement: `{"inference_endpoint":"http://127.0.0.1:11434","machine_api_env":"PROJECT_BOTS_API_TOKEN","cloud_fallback":false}` |
 
-Machine creation always reports `status: "unverified"`; agent creation always reports `status: "registered"`. A queued/claimed job is just persisted state. No worker exists, no endpoint is contacted, and completing/canceling a job does not execute or signal a process. Agent status never changes to suggest a live worker. No endpoint editing/deletion is shipped; register a new record for changed machine/agent definitions.
+Machine registration always reports `status: "unverified"`; agent creation always reports `status: "registered"`. A queued/claimed job is just persisted state. No worker exists; registration/job actions contact no compute endpoint. Completing/canceling a job does not execute or signal a process. Explicit Stage 2 requests alone contact compute. Registry status is intentionally not a cached health claim; read the health response for the actual observation. No registry endpoint editing/deletion is shipped; register a new record for changed machine/agent definitions.
 
 Job responses have `id`, `title`, `input`, `agent_id`, `status`, `progress` (initially 0), `message` (initially empty), `result` and `error` (initially null). These are the latest values, not an event log.
 
@@ -108,7 +108,74 @@ Terminal states have **no outgoing transitions**, including repeated cancellatio
 - POST bodies: `application/json`, positive Content-Length, maximum **65,536 bytes** (pairing maximum 128 bytes). No chunked request bodies.
 - Names, roles, titles and model identifiers: 1–200 characters. Input/result: 1–16,000 characters. Instructions/progress message/error: at most 4,000 characters (empty progress message allowed). Task input, result and instructions permit line breaks. Unknown configuration fields, including raw `api_key`/`token` fields, are rejected.
 - HTTP(S) endpoints: maximum 2,048 characters, no embedded username/password, query or fragment. Endpoint URLs are references, not connectivity evidence. Never embed credentials in URL paths or free-text fields either.
-- Credential references match `[A-Z_][A-Z0-9_]{0,127}`. The API does not resolve registry credential references; only the configured administrative machine API variable is read for authentication.
+- Credential references match `[A-Z_][A-Z0-9_]{0,127}`. Stage 2 resolves the selected registry credential reference on the management server for its compute adapter; the separate administrative API variable authenticates platform clients.
 - Platform settings cannot enable cloud fallback. Existing provider configuration is separate and **not exposed** through the platform's `/api/config`; legacy setup commands retain their own API when launched separately.
 
 Lists are unpaginated, there is no retention policy, and the stdlib server is suitable for a small trusted local administrative deployment, not public multi-tenant production traffic. Back up the private database while the server is stopped. Never put secrets in task text or results: these are deliberately returned to authenticated administrators.
+
+## Stage 2 compute API
+
+### Transport and scope
+
+`project-bots machine-service --catalog /absolute/catalog.json --state-dir /private/state` listens on **127.0.0.1:9443** by default. `--port`/`--host` are configurable. `--token-env` defaults to `PROJECT_BOTS_COMPUTE_TOKEN`. The token must be high entropy, ASCII/no whitespace, at least 32 characters and at least 16 distinct characters (this only rejects obviously weak values, not proves entropy). Generate with `secrets.token_urlsafe(32)`, provision securely, restart to rotate. Non-loopback listeners require both `--tls-cert`/`--tls-key`; verified TLS or a loopback SSH tunnel is mandatory for the management adapter. No insecure TLS bypass or raw libvirt LAN access.
+
+Direct compute clients send `Authorization: Bearer <compute token>` and JSON POSTs; **no Origin, Sec-Fetch-Site or X-Setup-Origin**. There is no browser pairing/CORS on compute. The browser must use the authenticated platform adapter, retaining the existing Host/Origin/CSRF rules. Compute tokens authorize the entire dedicated compute namespace, not arbitrary libvirt administration or human approval. Limit firewall exposure to the management host. Endpoint registration is administrative configuration, never a discovered or hardcoded IP.
+
+| Direct compute path | Platform adapter path |
+|---|---|
+| `GET /v1/health` | `GET /api/machines/<machine UUID>/health` |
+| `GET /v1/vms` | `GET /api/machines/<machine UUID>/vms` |
+| `POST /v1/vms` | `POST /api/machines/<machine UUID>/vms` |
+| `GET /v1/vms/<VM UUID>` | `GET /api/machines/<machine UUID>/vms/<VM UUID>` |
+| `POST /v1/vms/<VM UUID>/<action>` | `POST /api/machines/<machine UUID>/vms/<VM UUID>/<action>` |
+| `GET /v1/operations/<operation UUID>` | `GET /api/machines/<machine UUID>/operations/<operation UUID>` |
+
+All Stage 2 successes return `200`; lists are arrays. Adapter resolves the selected machine's `endpoint` and `credential_env` only at request time, outside platform database transactions. It refuses remote plaintext HTTP, URL credentials/path/query/fragment, redirects, environmental proxies, untrusted certificates and hostname mismatches. Optional `PROJECT_BOTS_MACHINE_CA_FILE` is an **admin-local environment** CA bundle, not a client-supplied path. API errors are redacted. There is no inference route, agent startup, shell, arbitrary libvirt method, XML, package list, disk/image path, cloud-init text or user command input.
+
+### Provision
+
+```json
+{
+  "template": "ubuntu-desktop",
+  "cpus": 2,
+  "ram_mib": 4096,
+  "disk_gib": 24,
+  "ssh_key": "ssh-ed25519 <base64 public key, no trailing comment>",
+  "operation_id": "<fresh canonical UUID>",
+  "confirmation": "create"
+}
+```
+
+This is a schema example, not executable input or a granted approval. Supply an actual key and UUID, and authorize the action yourself. The create operation UUID also becomes the VM UUID (`pb-<UUID>` domain). VM disks are standalone private qcow2 conversions, not shared writable backing images; seed is read-only. SHA-256 and standalone qcow2 format are checked against the trusted **admin-local catalog** before conversion. Cloud-init is generated internally with only `ubuntu-desktop-minimal`, `openssh-server`, `qemu-guest-agent`, package update, a locked non-sudo `bot` user, disabled root/password SSH, and the supplied ed25519 public key. It accepts no extra commands/packages. Provisioning defines a **shut-off** VM; Desktop packages install on first boot and require working package mirrors/network. Host GPU/Ollama is not configured or passed through.
+
+Per VM bounds: integer/non-boolean **1–8 CPUs, 2048–32768 MiB RAM, 16–256 GiB disk**. Aggregate reservation policy caps CPUs at min(8, host CPUs minus 2), RAM at min(32768 MiB, host total minus 8192 MiB), and disk at available filesystem GiB minus 10 GiB. Existing non-deleted reservations count even when off or provisioning is uncertain; disk reservations are conservative and also count against currently free space. Start additionally requires requested RAM plus 4096 MiB currently available. These are admission bounds, not a cgroup guarantee against concurrent host/Ollama pressure.
+
+### Actions and confirmation
+
+Every mutation requires a fresh `operation_id` UUID and exact `confirmation: "<action>:<VM UUID>"`. Dashboard prompts require typing that string, and no mutation is sent on cancellation/mismatch. These are explicit caller-intent fields, **not an independent approval/RBAC system**. An authenticated program can supply them: callers/assistants must obtain real authorization and never infer it from untrusted VM/job/tool text. Requests, responses and error strings never become executable commands.
+
+| Action | Extra fields | Preconditions / effect |
+|---|---|---|
+| `start` | none | Shut off → running request |
+| `shutdown` | none | Running/paused → graceful ACPI shutdown request, no force |
+| `restart` | none | Running → graceful reboot request, no reset |
+| `pause` | none | Running → suspended |
+| `resume` | none | Paused → running |
+| `resources` | `cpus`, `ram_mib`, `disk_gib` | Shut off; same bounds, disk may only grow; no disk growth with snapshots |
+| `snapshot-create` | `snapshot` | Shut off; internal disk-only snapshot of standalone qcow2 |
+| `snapshot-restore` | `snapshot` | Shut off; restore an existing service-recorded disk-only snapshot |
+| `delete` | none | Shut off; undefine verified-owned domain, remove only fixed files inside its private directory; retain tombstone/operation metadata |
+
+Snapshot names match `[a-z][a-z0-9-]{0,31}`. No live snapshots, RAM snapshots, backing chains, external snapshot paths, shrinking, forced power-off, snapshot deletion, guest filesystem resizing, custom networking or GPU passthrough. Restoring a disk snapshot does not restore CPU/RAM settings. Disk growth must be followed by separately approved guest filesystem expansion (not implemented here). Shutdown/restart return **observed** state immediately; poll detail until desired state is reached. Paused guests may need resume before ACPI shutdown can complete.
+
+Detail exposes durable `desired`/`phase`/requested resources and fresh `state`, with UUID/owner metadata/exact disk-path verification. Failed observation returns `state: "unavailable"`, never assumes the domain is absent. Console info includes SPICE `listen: "127.0.0.1"`, observed port (null/unassigned when off), `ssh_user: "bot"`, allocated `ssh_port` in 22000–22099, and `requires_tunnel: true`. User-mode passt forwards that loopback port to guest 22; no raw graphics or SSH listener is intentionally exposed to LAN. Validate actual bindings on the compute host. See host docs for tunnel/access checks.
+
+Health performs an authenticated `virsh ... version` read and reports CPU count, memory total/available, free storage, KVM device access, template IDs, reservation policy and backend URI `qemu:///session`. It does **not** prove VM boot, package installation, SSH, Desktop readiness, passt support or Ollama capacity.
+
+### Durability, idempotency, errors
+
+Compute has a separate private SQLite DB, durable service owner UUID, VM intent/tombstones and operations. Operations store ID, target, action, request digest (not credentials/raw key), timestamps, state (`running`, `succeeded`, `rejected`, `unknown`) and success result. Writes serialize with an OS flock across HTTP threads/processes; SQL transactions are not held over subprocess/network calls. Exact successful replays return the original cached result without commands, even after restart. Changed payload/action/target with the same ID returns `409`. A fresh detail read, not cached operation output, supplies current observed state.
+
+Host commands use fixed argv with no shell and a 120-second timeout. Adapter timeout is 15 seconds: create/conversion may outlast it **without failing on the host**. Keep the original UUID/payload, inspect its operation and VM, and never blindly submit a new create UUID. Successful host completion remains inspectable/cached. Incomplete/crashed/unknown operations block further mutations of that target, including after restart; they are not automatically retried or cleaned up. Local administrator reconciliation while service is stopped is required; no API exists to clear uncertainty. Partial disks/definitions are retained deliberately rather than risk deleting unrelated state. Rejected IDs also cannot be reused; correct the request under a new ID only after confirming no mutation occurred.
+
+Compute POSTs require non-chunked JSON with Content-Length **1–16384 bytes**; duplicate fields/unknown action fields are rejected. `400` validation, `403` authentication/browser-origin rejection, `404` unknown resource, `409` state/ownership/operation conflict or busy host, `503` unavailable/uncertain host outcome. The adapter reads bounded responses (2 MiB). No secrets or subprocess stderr are returned. These stdlib servers are for a small trusted administrator deployment, not public multi-tenant traffic. [Host setup and actual acceptance](COMPUTE_HOST.md) must be completed before claiming Stage 2 works on hardware.

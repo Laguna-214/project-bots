@@ -1,70 +1,86 @@
 # Implementation status
 
-## Scope and baseline audit
+## Checkpoint: Stages 1–2 software; real Stage 2 host acceptance PENDING
 
-Stage 1 only. The prior tracked-file audit found a Python standard-library CLI, provider JSON configuration, LAN setup UI/pairing, installer, revision-aware updater and cautious/idempotent uninstaller. Baseline `70fcc55` had **11 passing unittest tests**, no SQLite persistence, agent/machine registry, durable jobs, main dashboard, or compute runtime. The implementation preserves those existing commands and scripts; provider config is not reused as platform state.
+Baseline for this change: public `main` **80fef4c**, Stage 1 with **22 passing tests**. No commit/push, host package/service installation, actual VM mutation, guessed-IP probe, Ollama change or Hermes environment configuration was performed in this checkpoint. Parent review/publication is separate.
 
-This is a software implementation/test result, **not a hardware or network deployment report**. User-provided intended hosts are:
+This is a **software implementation and test report, not a compute deployment report**. User-supplied management context is EliteDesk `10.0.50.10`, `/dev/kvm` present and `virsh` absent. It does not establish compute capability. Compute access has not been supplied; `10.0.50.30` remains an example, not a verified address. Intended compute is the existing Ubuntu Desktop i7-12700K/64 GB/RX 6800 PC; no Proxmox migration or GPU passthrough is proposed. Real virtualization, connectivity, passt support, guest boot/SSH/Desktop and host resource impact remain unverified.
 
-- Management: EliteDesk, Ubuntu, i5-9500, 16 GB RAM.
-- Separate compute: Ubuntu Desktop gaming PC, i7-12700K, 64 GB RAM, RX 6800 16 GB plus UHD 770; shared Ollama and libvirt are later-stage targets.
+## Stage 1 preserved
 
-Neither host was probed. Example `10.0.50.10` / `10.0.50.30` addresses are placeholders, not verified addresses. No connectivity, inference compatibility, GPU utilization, virtualization capability, network layout, or available capacity is claimed.
+- Existing setup local/web, provider JSON, pairing/Host/Origin/CSRF protections, Codex helpers, installer, development-main updater and cautious/idempotent uninstaller remain available.
+- `project-bots serve`: default loopback port 8032; persistent separate private SQLite machine/agent/job/settings state, FK enforcement, atomic claims, transitions, input limits and machine token reference remain intact.
+- Registry machines remain **unverified** records, agents **registered** definitions. Jobs/progress/results are reports, not real worker execution. No inference endpoint is contacted by settings/registry/job operations; cloud fallback stays false.
+- Dashboard retains registration, jobs, assignment/cancel/inspection/settings and pairing-session refresh behavior. Stage 2 compute calls occur only through explicit controls.
+- All original **22 tests** pass, including disposable-home installation/update/uninstall, installed platform restart persistence, authentication/browser guards and job claim races.
 
-## Shipped Stage 1
+## Stage 2 shipped software
 
-- `project-bots serve`: loopback by default on port 8032, explicit `--host`/`--port` for trusted LAN/alternate-port use.
-- SQLite schema migration v0→v1 in one transaction, version guard, private database/directory, bound SQL parameters, FK enforcement. New connections are closed after every operation.
-- Persistent machines: UUID, name, configurable endpoint, optional credential environment reference, always **unverified**.
-- Persistent agents: UUID, name, role, narrow non-secret config, optional assigned machine, always **registered**. These statuses never imply a running worker.
-- Durable jobs: UUID, input, assignment, queued/running/succeeded/failed/canceled state, latest progress/message/result/error; validated transitions, terminal-state protection, atomic claim under a serialized write transaction. Claims do not execute tasks.
-- Service/repository boundary: HTTP routes call application rules; SQL/transactions live only in `SQLiteRepository`. A future Postgres repository can implement the same insert/list/get/settings/atomic-mutation contract without coupling services to SQLite SQL. No Postgres adapter is shipped.
-- Responsive dashboard: register machines and agents, create/assign/cancel jobs, inspect input/progress/results/failure, change platform settings, explicit refresh. Empty state works with no machine at all.
-- Legacy pairing adapted without replacing provider setup: 8 digits, 600-second deadline, one successful consumption, five incorrect attempts then lock, strong in-memory bearer. New dashboard uses per-tab sessionStorage for refresh continuity; restart invalidates the session. Legacy page retains memory-only/restart-on-refresh behavior.
-- Host/Origin/custom-origin and CSRF checks for browser operations, no CORS permission, CSP, no request logging, generic validation errors that do not reflect submitted credential values.
-- Optional administrative machine API credential resolved only from an environment-variable reference, disabled when unset/under 32 characters. Machine auth refuses browser Origin/fetch metadata instead of creating a CSRF escape hatch. Variable names, not values, are stored/returned.
-- Local inference endpoint setting defaults to loopback Ollama; **no connection is made** and cloud fallback is fixed false. Existing cloud provider setup remains inert configuration, never an automatic runtime fallback.
-- `PROJECT_BOTS_DB` and existing `PROJECT_BOTS_CONFIG` path overrides. Registry/settings and provider JSON remain separate. Installer/update/uninstaller scripts are unchanged; retained database/config are not deleted.
+### Dedicated compute boundary
 
-## Verification and TDD
+`project-bots machine-service --catalog /absolute/trusted/catalog.json --state-dir /private/state` defaults to **127.0.0.1:9443**, separately configurable from the platform. Environment token reference (`--token-env`, default `PROJECT_BOTS_COMPUTE_TOKEN`) requires >=32 ASCII/non-whitespace characters and >=16 distinct characters, with cryptographically random generation documented. This rejects obviously weak inputs but cannot prove entropy. All routes authenticate; browser Origin/fetch metadata is refused. Non-loopback binds require configured TLS certificate/key; no raw libvirt LAN socket or general shell/command/XML/path endpoint.
 
-Development used red→green vertical slices: machine persistence/private schema; validated agents/FKs; durable job lifecycle; transition/concurrent-claim rules; settings; installed CLI/HTTP restart persistence; machine auth/browser guards; dashboard forms/client; malformed Unicode/multiline handling. Tests were run failing before each production slice, then the full suite was rerun. Extra acceptance tests exercise already implemented boundaries rather than introducing untested behavior.
+`compute.py` uses supported `virsh --connect qemu:///session` fixed argv, plus fixed `qemu-img` and `cloud-localds` invocations, **never shell=True**. Domain definition requests `--validate`. Host commands have 120-second deadlines and redacted errors. No automatic dependency/service installation occurs.
+
+Supported operations: health/resource/capability observations; managed list/detail; provision; start, graceful shutdown/restart, pause/resume; offline CPU/RAM/disk-growth changes; offline standalone-qcow2 internal disk snapshot create/restore; offline delete; operation inspection; localhost console/SSH connection information. Shutdown/restart are requests, not forced transitions; callers poll fresh detail.
+
+### Confinement and provisioning
+
+- Managed names `pb-<canonical UUID>` plus persistent VM intent, durable service-owner UUID, matching domain UUID/owner XML metadata and exact managed disk sources; name prefix alone is insufficient authority. Symlinked managed disks/directories and non-loopback graphics/GPU hostdev mismatches are refused.
+- Separate private per-VM directories, standalone qcow2 converted disks, read-only seed, and fixed-file-only deletion after ownership/offline verification. No writable shared backing disks, arbitrary storage paths or GPU passthrough.
+- Trusted admin-local catalog pinning actual image path/SHA-256; canonical paths, trusted owners, no group/other write, standalone qcow2 and virtual-size validation. Administrator must independently establish publisher/image trust; same-UID/root administrators remain trusted.
+- Fixed Ubuntu cloud-init package list (`ubuntu-desktop-minimal`, `openssh-server`, `qemu-guest-agent`), package update, locked non-sudo `bot`, disabled root/password SSH and ed25519 public key only. No supplied commands, raw YAML/XML, custom packages, password or private key inputs.
+- Session user-mode **passt** networking with loopback-only allocated SSH forwards; SPICE localhost graphics. Generated XML validates against libvirt v10.0.0 schema. Actual host network/socket behavior is still pending.
+- Per-VM CPU/RAM/disk bounds and conservative aggregate reservations/headroom; start checks current available RAM. These are admission controls, not guaranteed quotas against concurrent desktop/Ollama load. Disk snapshots/growth/guest writes can still consume storage.
+
+### Management integration and explicit intent
+
+`machine_client.py` resolves the registry endpoint and credential environment reference, requires verified HTTPS except explicit loopback SSH-tunnel HTTP, refuses redirects/proxies/URL credentials/path/query/fragment and bounds reads. An optional admin-local CA bundle is selected by `PROJECT_BOTS_MACHINE_CA_FILE`. No hardcoded compute host or automatic discovery. Calls occur outside platform repository transactions. Narrow authenticated `/api/machines/<id>/health`, `/vms`, `/vms/<id>/<action>` and `/operations/<id>` routes preserve Stage 1 browser protections; compute credentials never enter browser requests/responses.
+
+Every mutation requires an operation UUID and exact per-action confirmation (`create` or `<action>:<VM UUID>`). Dashboard typed prompts send no mutation on cancellation/mismatch, display result data through textContent only, retain request/operation information after errors and support explicit operation inspection. These fields express **caller intent, not cryptographic human approval**; authenticated programs must obtain actual permission. Job/VM/result text never authorizes or executes a command.
+
+### Durability and uncertainty
+
+A separate private compute SQLite DB stores singleton owner identity, VM desired intent/resources/phase/tombstones and operation ID/target/action/digest/timestamps/status/result. OS flock serializes mutations across threads/processes, without SQL transactions spanning host commands. Exact successful replays are cached without re-execution, including after restart; changed payload/ID or busy/uncertain operations conflict. Partial provisioning intent/disks remain inspectable. Crashed/running or unknown operations block later target mutations until **local administrator reconciliation**; no automatic retries, destructive cleanup or remote force-unlock exists.
+
+Adapter HTTP timeout is 15 seconds, deliberately shorter than a possible conversion: callers must keep the original UUID/payload and inspect, not blindly create again. Mutation failures or failed post-mutation observation become uncertain operations. Graceful power-operation success means the request completed; observed state can still differ from desired.
+
+## Files and audit scope
+
+New production files: `project_bots/compute.py`, `machine_http.py`, `machine_client.py`. Modified production files: `cli.py`, `service.py`, `platform_web.py`, `dashboard.html`, `dashboard.js`. Stage 1 `repository.py`, provider setup/config, installer/update/uninstaller implementation remain unchanged. Installer copies the whole package, so new modules ship automatically; installed-platform tests import the new modules successfully.
+
+New verification files: `tests/test_machine.py`, `tests/test_domain_schema.py`, `tests/dashboard_vm.cjs`, `scripts/accept_machine.py`. Documentation updated: `README.md`, `docs/API.md`, this status; new `docs/COMPUTE_HOST.md` gives administrator/user prerequisites, session-libvirt limitations, transport/catalog setup, actual acceptance, rollback and uncertainty handling. No systemd unit or host setup script is installed.
+
+## Verification actually performed
+
+Development followed red→green vertical slices: authenticated compute HTTP/transport policy; trusted provision/generated XML/private disk; lifecycle/offline edits/snapshots/ownership; durable idempotency/timeouts; input/storage policy and health/console; fake HTTP adapter; CLI launch/refused insecure bind; registry-backed platform routes/confirmation; dashboard canceled-versus-authorized mutation contract/forms; trusted catalog/snapshot format checks; low-memory/partial provisioning; post-mutation uncertain observation; singleton owner/schema validation; CA configuration errors. New acceptance checks additionally exercise already implemented behavior. No fabricated host results.
 
 ```sh
 python3 -m unittest discover -s tests -v
-node --check project_bots/dashboard.js  # optional, no Node runtime dependency
-# From a git checkout:
+node --check project_bots/dashboard.js
+node tests/dashboard_vm.cjs
+# Optional, no daemon/VM needed, with administrator-supplied sibling schemas:
+PROJECT_BOTS_DOMAIN_RNG=/path/to/libvirt/schemas/domain.rng \
+  python3 -m unittest discover -s tests -p test_domain_schema.py -v
+# Checkout hygiene:
 git diff --check
 ```
 
-Current suite: **22 tests**, including the original 11. Acceptance tests install to a temporary HOME, launch the installed executable through HTTP, pair, register machine/agent, create/assign/claim/progress/complete jobs, stop and restart against the same DB, re-pair, and read identical persistent records. Further tests cover failure/cancellation, HTTP and repository eight-way claim races (one winner), bad UUIDs/FKs/inputs, unauthorized/Host/Origin/CSRF rejection, malformed JSON/Unicode, oversized bodies, short machine credentials, terminal transitions, and absence of API credential values in responses/server output. Existing update tests use a disposable local Git origin; no deployment/update against the production remote was performed in this change.
+Current discovery: **44 tests**, **43 pass + 1 optional schema skip** when the schema environment variable is absent. The optional test was separately executed and **passed** against actual upstream **libvirt v10.0.0 Relax NG schemas** (nine files downloaded into temporary scratch), using installed libxml2 through ctypes; generated domain XML is not merely a mock string. Node syntax and fake-DOM confirmation contract pass. Stage 1's 22 tests all pass. Temporary TLS test verifies a trusted chain succeeds, untrusted chain and hostname mismatch fail. Local HTTP tests exercise real sockets with a **fake backend**, distinctly not real VM integration. Mocked fixed argv covers provisioning/lifecycle/resources/offline snapshots/delete, ownership mismatch, resource admission, concurrent duplicates, persistent replay and uncertain failure. Opt-in script refusal is tested before keys/network access; its lifecycle flow is tested with a fake client, not libvirt.
 
-A real browser paired successfully, submitted machine/agent/job forms, displayed the new records and system status, and retained its session across a same-tab reload. At 390px mobile width, document scroll width matched viewport width (no horizontal overflow). Installed HTTP acceptance tests independently verify persistence across server restart. Screenshot capture timed out; no screenshot-based visual review is claimed. There are no fabricated worker/inference/hardware test results.
+No real browser visual review of the new Stage 2 UI is claimed; the existing Stage 1 browser review is historical, not evidence about these new controls. No actual libvirt VM has been created, started, paused, edited, snapshotted, shut down or deleted by this checkpoint.
 
-## Design choices and limitations
+## Remaining limitations / acceptance gate
 
-1. **Metadata only.** No endpoint is contacted, VM created, agent launched, model downloaded, provider called, or host changed. Administrative clients can manually report progress/results; those reports are not evidence a worker exists.
-2. **Local single administrator.** One process-local browser session, no accounts/RBAC or per-machine scopes. Machine tokens have full API administrative privilege. There is no claim lease, ownership authentication, heartbeat, retry, scheduler, worker reconciliation, or cancellation signal.
-3. **Trusted transport required.** Stdlib HTTP is plaintext; prefer loopback plus SSH forwarding. No public-facing hardening, TLS listener, rate limiting beyond pairing attempts, reverse-proxy support contract, or IPv6 listener. Numeric private/loopback Host values or localhost only; arbitrary DNS names are not accepted.
-4. **Small deployment persistence.** SQLite transactions serialize mutations (including claim validation) for correctness. Reads also use the repository transaction helper; suitable for small local control-plane traffic, not high throughput. JSON payloads preserve narrow records alongside SQL UUID/FK columns. Collections are unpaginated; no retention, timestamps/event history, import/export, deletion or editing registry records is implemented. Back up while stopped.
-5. **Private data, not encrypted data.** DB mode 0600, dedicated parent 0700; overrides must use a dedicated private directory. An existing parent with group/other permissions is rejected without modifying it (regression-tested). No encryption at rest. Task/result text deliberately persists and is visible to authorized administrators: never submit secrets there. Credential values are not accepted as credential settings.
-6. **Restart semantics.** Durable job/registry/settings state remains. Browser bearer is revoked. Running jobs stay running until explicitly completed/failed/canceled through the API; nothing silently resumes or retries them. Platform and legacy setup cannot share the same listening port simultaneously.
-7. **No cloud fallback.** Platform setting cannot enable it. Old provider presets are preserved for compatibility, but there is no inference engine and no automatic cloud send.
+1. **Real host gate remains open.** Obtain actual compute access/addresses and administrator approval. Verify Ubuntu/libvirt/QEMU/passt/KVM, catalog signature/hash, user daemon/runtime, resource headroom and TLS/SSH/firewall. Do not infer compute access from management `/dev/kvm` or an example IP.
+2. **Host install is manual and privileged where necessary.** Prefer dedicated service UID + `qemu:///session`; no blanket system-libvirt group membership recommendation. Session daemon activation/user runtime and KVM device access must be reviewed locally. Same-UID/root processes are trusted; no defense against their direct libvirt/file races. No Proxmox, GPU passthrough or host Ollama changes.
+3. **Actually exercise the lifecycle.** `scripts/accept_machine.py` requires `--confirm-real-host-mutation 'CREATE START SHUTDOWN DELETE DISPOSABLE VM'` and an actual public key/endpoint/token. It creates only a disposable VM and stops on uncertainty without forced cleanup. Perform the manual extended/resource/snapshot/SSH/cloud-init/Desktop checks in host docs too. A running domain or installed Desktop package list does not prove graphical session readiness; key-only guest has no configured graphical password/autologin.
+4. **Recovery is deliberately conservative.** No automatic reconciliation/force-unlock CLI/API, orphan adoption, rollback of uncertain host mutations or snapshot retention/deletion. Local reviewed repair of a stopped backed-up state/domain may be needed. Preserve owner DB. Cached successful operation results can be stale; read detail for current observations.
+5. **Small trusted deployment only.** Single administrator, no RBAC/mTLS, pagination/retention, durable approval policy or public-facing DoS hardening. No custom networking, live snapshots, force-off/reset, disk shrinking, guest filesystem expansion or guest command API. No absolute CPU/RAM/disk quota guarantee against concurrent host activity.
+6. **Software delivery is not publication/deployment.** No commit/push/remote update/host install was performed; parent reviews and publishes separately. Update/uninstall preserves VM state/domains and requires manually stopping processes; it does not tear down host packages/users/firewall/tunnels.
 
-## Exact next Stage 2 work — not implemented
+## Stages 3–5 — not implemented
 
-Stage 2 should add the **compute-host VM management boundary only**, preserving this working metadata platform. It must be explicitly authorized and executed on the actual Ubuntu Desktop compute PC, not assumed from example addresses:
-
-1. Confirm real management/compute addresses, routing, intended trusted transport and administrator approval; inspect the actual Ubuntu Desktop version, CPU virtualization flags/KVM availability, storage capacity, and existing libvirt/Ollama installations without disrupting desktop use. Record discovered values; do not substitute `10.0.50.*` examples.
-2. Establish KVM/QEMU/libvirt on the Ubuntu Desktop compute PC with administrator approval, least-privilege service identity, reviewed storage pool, and an explicit VM resource/network policy. Do **not** replace the desktop with Proxmox, expose the raw libvirt socket/TCP API, grant generic remote shell, or configure GPU passthrough. Shared host Ollama should retain access to host GPU resources; no GPU or backend compatibility is assumed until tested separately.
-3. Specify and implement a **narrow authenticated compute service**: health/capabilities, list/detail, provision from an allowlisted Ubuntu template, and start/stop/delete only managed VMs. Use a managed-VM identifier namespace, explicit input/resource limits, template/image allowlists, idempotent operations and durable operation records. No arbitrary commands, domain XML, file paths, libvirt methods or shell strings accepted from clients.
-4. Protect that service with approved TLS/mTLS or an explicitly documented SSH transport, credential references and rotation, binding/firewall restricted to the management host. Read compute credentials from a private environment/file provider, never browser values or database secrets. Define timeouts and safe redacted errors.
-5. Add a management-side adapter behind a service interface. Persist provisioning intent and actual managed VM IDs/status, separating **desired** from **observed** state. Reconcile safely after restarts/timeouts and mark a machine verified only after an actual authenticated capability check. Keep all external calls out of the SQLite repository and avoid blocking DB transactions across network calls.
-6. TDD adapter/contracts with a local fake HTTP compute service, then opt-in integration against an administrator-approved disposable libvirt test VM on the actual compute host. Exercise auth rejection, allowlists/limits, create/start/stop/delete, duplicate requests, unreachable host, partial failure and reconciliation. Do not describe a fake-service test as real hardware validation.
-7. Surface real VM status and narrowly scoped lifecycle controls in the dashboard only after those operations work. Document installation/rollback and destructive-operation confirmation; require an explicit Stage 2 acceptance review before moving to workers.
-
-## Stages 3–5 — all not implemented
-
-- **Stage 3:** per-VM **OpenClaw** worker bootstrap/runtime and lifecycle, real worker identity/permissions, heartbeats, lease/claim ownership, results/cancellation handling, shared host-local Ollama integration and measured resource limits. No OpenClaw worker exists in Stage 1.
-- **Stage 4:** **Hermes remains the user's assistant**, connected through a narrow authenticated MCP surface for approved workforce operations. No Hermes configuration, skill, plugin, service or MCP installation was changed by this implementation.
-- **Stage 5:** orchestration/approval/reliability/operational hardening after the earlier stages are working and accepted. No autonomous multi-agent workforce, scheduling, recovery or public multi-user product is claimed here.
+- **Stage 3:** per-VM OpenClaw worker runtime/bootstrap/identity, heartbeats, leases/claim ownership, results/cancellation and shared host Ollama integration with measured resource limits.
+- **Stage 4:** Hermes remains the user's assistant, later connected through narrow authenticated MCP operations. No Hermes configuration/plugin/service changes here.
+- **Stage 5:** orchestration, independent approval/reliability/recovery and operational hardening after actual Stage 2 acceptance. No autonomous workforce is claimed.

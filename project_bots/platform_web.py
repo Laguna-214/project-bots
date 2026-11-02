@@ -1,4 +1,4 @@
-"""HTTP adapter for the Stage 1 service. Nothing here contacts compute hosts."""
+"""Authenticated platform HTTP adapter, including explicit Stage 2 compute routes."""
 from http.server import ThreadingHTTPServer
 import hmac
 import json
@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import secrets
 
+from .compute import ComputeUnavailable
 from .repository import SQLiteRepository
 from .service import ConflictError, PlatformService
 from .web import make_handler
@@ -73,6 +74,8 @@ def make_platform_handler(code, service, ttl_seconds=600):
                     else:
                         create = {'machines': service.create_machine, 'agents': service.create_agent, 'jobs': service.create_job}[collection]
                         result, status = create(data), 201
+                elif 5 <= len(parts) <= 7 and parts[1:3] == ['api', 'machines']:
+                    result, status = service.compute_request(parts[3], method, '/'.join(parts[4:]), data), 200
                 elif self.path == '/api/settings':
                     result = service.get_settings() if method == 'GET' else service.save_settings(data)
                     status = 200
@@ -84,6 +87,8 @@ def make_platform_handler(code, service, ttl_seconds=600):
                     self.json_response(404, {'error': 'Not found'})
                     return
                 self.json_response(status, result)
+            except ComputeUnavailable:
+                self.json_response(503, {'error': 'Compute unavailable or outcome uncertain; inspect operation before retrying'})
             except ConflictError as exc:
                 self.json_response(409, {'error': str(exc)})
             except LookupError:

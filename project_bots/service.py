@@ -1,4 +1,4 @@
-"""Platform application rules; no HTTP, inference, VM or worker execution."""
+"""Platform rules and explicit compute adapter; no inference or worker execution."""
 import re
 import uuid
 from urllib.parse import urlsplit
@@ -134,6 +134,35 @@ class PlatformService:
                 job['status'] = 'canceled'
             return job
         return self.repository.mutate_job(job_id, change)
+
+    def compute_request(self, machine_id, method, route, data=None):
+        import os
+        from .machine_client import MachineClient
+        identifier(machine_id)
+        machine = next((m for m in self.repository.list('machines') if m['id'] == machine_id), None)
+        if machine is None:
+            raise LookupError('Machine not found')
+        parts = route.split('/')
+        if method == 'POST':
+            if route == 'vms':
+                expected = 'create'
+            elif len(parts) == 3 and parts[0] == 'vms' and parts[2] in ('start', 'shutdown', 'restart', 'pause', 'resume', 'delete', 'resources', 'snapshot-create', 'snapshot-restore'):
+                identifier(parts[1]); expected = parts[2] + ':' + parts[1]
+            else:
+                raise ValueError('Unsupported compute action')
+            if not isinstance(data, dict) or data.get('confirmation') != expected or identifier(data.get('operation_id')) is None:
+                raise ValueError('Explicit action confirmation and operation UUID required')
+        elif method == 'GET':
+            if route not in ('health', 'vms'):
+                if len(parts) != 2 or parts[0] not in ('vms', 'operations') or identifier(parts[1]) is None:
+                    raise ValueError('Unsupported compute route')
+        else:
+            raise ValueError('Unsupported method')
+        reference = machine['credential_env']
+        if not reference:
+            raise ValueError('Configure a compute credential environment reference')
+        client = MachineClient(machine['endpoint'], os.environ.get(reference, ''), os.environ.get('PROJECT_BOTS_MACHINE_CA_FILE'))
+        return client.request(method, '/v1/' + route, data)
 
     def list(self, collection):
         return self.repository.list(collection)
