@@ -3,9 +3,12 @@
 > **RESUMED on 2026-11-03 with explicit user authorization.**
 > Published development source checkpoint: `e93415b` ([draft PR #1](https://github.com/Laguna-214/project-bots/pull/1)), not merged/released.
 > Latest parent-executed checkpoint suite: **209 tests, OK with 3 skips**.
-> Subsequent trusted VM/network adapter implementation is in progress; it is not
-> covered by that checkpoint verification. Both GitHub source/UI CI runs passed
-> on `0afa60c`; protected-VM code is not yet published or privileged-execution accepted.
+> Subsequent opt-in protected VM authority source is implemented but not deployed.
+> Parent post-fix suite: **227 tests, OK with 2 privileged skips**, with actual XML
+> schema validation enabled. A critical-stop ordering bug was fixed; final scoped
+> source-publication re-review **passed** (`deleg_54a86c27`). BPF compilation/loading, real VM/packet effects and protected
+> monitoring/watchdog acceptance remain unperformed. Both earlier GitHub source/UI CI
+> runs passed on `0afa60c`; the new increment is not privileged-execution accepted.
 > Optional XML validation separately passed; all **5 privileged namespace tests**
 > passed inside the approved disposable administrator VM. They prove kernel/network
 > and subprocess primitives, **not hostile VM containment**. Six Node UI programs,
