@@ -18,7 +18,7 @@ class SQLiteRepository:
         os.close(fd)
         with self.transaction() as db:
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if version > 3:
+            if version > 6:
                 raise ValueError('Database schema is newer than this program')
             if version == 0:
                 db.execute('CREATE TABLE machines (id TEXT PRIMARY KEY, data TEXT NOT NULL)')
@@ -33,6 +33,16 @@ class SQLiteRepository:
             if version < 3:
                 db.execute('CREATE TABLE inference_admission (sequence INTEGER PRIMARY KEY AUTOINCREMENT, ticket TEXT UNIQUE NOT NULL, priority INTEGER NOT NULL, memory_mib INTEGER NOT NULL, state TEXT NOT NULL, deadline REAL NOT NULL)')
                 db.execute('PRAGMA user_version = 3')
+            if version < 4:
+                from .chat import migrate
+                migrate(db)
+                db.execute('PRAGMA user_version = 4')
+            from .security import migrate
+            migrate(db)
+            if version < 6:
+                from .permissions import migrate as migrate_permissions
+                migrate_permissions(db)
+                db.execute('PRAGMA user_version = 6')
 
     @contextmanager
     def transaction(self):
@@ -75,6 +85,8 @@ class SQLiteRepository:
     def insert_job(self, job):
         try:
             with self.transaction() as db:
+                from .security import check_agent_capability
+                check_agent_capability(self, job.get('agent_id'), db=db)
                 db.execute('INSERT INTO jobs (id, agent_id, data) VALUES (?, ?, ?)', (job['id'], job['agent_id'], json.dumps(job)))
         except sqlite3.IntegrityError:
             raise ValueError('Unknown assigned agent') from None
@@ -99,6 +111,10 @@ class SQLiteRepository:
                     from .service import ConflictError
                     raise ConflictError('Dispatched jobs require execution reconciliation; active cancellation is not implemented')
                 job = change(self._job(db, job_id))
+                if job['status'] in ('queued', 'running'):
+                    from .security import check_agent_execution, check_agent_capability
+                    gate = check_agent_execution if job['status'] == 'running' else check_agent_capability
+                    gate(self, job['agent_id'], db=db)
                 db.execute('UPDATE jobs SET agent_id = ?, data = ? WHERE id = ?', (job['agent_id'], json.dumps(job), job_id))
                 return job
         except sqlite3.IntegrityError:
@@ -108,6 +124,8 @@ class SQLiteRepository:
         from .service import ConflictError
         try:
             with self.transaction() as db:
+                from .security import check_agent_capability
+                check_agent_capability(self, worker['agent_id'], db=db)
                 if db.execute('SELECT 1 FROM executions WHERE json_extract(data,\'$.agent_id\') = ? AND json_extract(data,\'$.status\') IN (\'running\',\'uncertain\')', (worker['agent_id'],)).fetchone():
                     raise ConflictError('Worker has an unresolved execution')
                 db.execute('INSERT INTO workers(agent_id, vm_id, data) VALUES(?,?,?) ON CONFLICT(agent_id) DO UPDATE SET vm_id=excluded.vm_id,data=excluded.data', (worker['agent_id'], worker['vm_id'], json.dumps(worker)))
@@ -137,6 +155,8 @@ class SQLiteRepository:
         import time
         from .service import ConflictError
         with self.transaction() as db:
+            from .security import check_agent_execution
+            check_agent_execution(self, worker['agent_id'], db=db)
             job = self._job(db, job_id)
             if job['status'] != 'queued' or job['agent_id'] != worker['agent_id'] or db.execute('SELECT 1 FROM executions WHERE job_id=?', (job_id,)).fetchone():
                 raise ConflictError('Job cannot be dispatched again')
@@ -156,6 +176,8 @@ class SQLiteRepository:
         with self.transaction() as db:
             job = self._job(db,job_id)
             receipt = json.loads(db.execute('SELECT data FROM executions WHERE job_id=?',(job_id,)).fetchone()[0])
+            if receipt.get('security_incident_id'):
+                return job
             receipt.update(status=status, finished_at=time.time(), response_id=response_id)
             job.update(status='succeeded' if status=='succeeded' else 'failed', result=result if status=='succeeded' else None,
                        error=None if status=='succeeded' else ('Gateway outcome uncertain; no automatic retry' if status=='uncertain' else 'Gateway did not complete the job'), progress=100 if status=='succeeded' else 0)
@@ -166,6 +188,8 @@ class SQLiteRepository:
     def admission_enqueue(self, ticket, memory_mib, priority, deadline, queue_limit):
         import time
         with self.transaction() as db:
+            from .security import check_global
+            check_global(self, db=db, require_health=False)
             db.execute("DELETE FROM inference_admission WHERE state='queued' AND deadline<=?", (time.time(),))
             if db.execute("SELECT count(*) FROM inference_admission WHERE state='queued'").fetchone()[0] >= queue_limit:
                 raise ValueError('Inference queue exceeded')
@@ -174,6 +198,8 @@ class SQLiteRepository:
     def admission_acquire(self, ticket, memory_mib, concurrency):
         import time
         with self.transaction() as db:
+            from .security import check_global
+            check_global(self, db=db, require_health=False)
             db.execute("DELETE FROM inference_admission WHERE state='queued' AND deadline<=?", (time.time(),))
             first = db.execute("SELECT ticket,memory_mib FROM inference_admission WHERE state='queued' ORDER BY priority,sequence LIMIT 1").fetchone()
             active, reserved = db.execute("SELECT count(*),coalesce(sum(memory_mib),0) FROM inference_admission WHERE state IN ('active','uncertain')").fetchone()

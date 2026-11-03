@@ -78,6 +78,8 @@ def make_handler(backend, token):
                     result = backend.list() if method == 'GET' else backend.create(data)
                 elif len(parts) == 4 and parts[1:3] == ['v1', 'vms'] and method == 'GET':
                     result = backend.detail(parts[3])
+                elif len(parts) == 5 and parts[1:3] == ['v1', 'vms'] and parts[4] == 'network' and method == 'GET':
+                    result = backend.network_status(parts[3])
                 elif len(parts) == 5 and parts[1:3] == ['v1', 'vms'] and method == 'POST':
                     result = backend.action(parts[3], parts[4], data)
                 elif len(parts) == 4 and parts[1:3] == ['v1', 'operations'] and method == 'GET':

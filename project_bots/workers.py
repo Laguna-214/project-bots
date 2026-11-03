@@ -6,7 +6,12 @@ from .machine_client import MachineClient
 from .models import model_profile
 
 
-def gateway_run(worker, job):
+def gateway_run(worker, job, *, repository=None):
+    from .service import ConflictError
+    from .security import check_agent_execution
+    if repository is None:
+        raise ConflictError('Trusted security repository required before Gateway dispatch')
+    check_agent_execution(repository, worker.get('agent_id'))
     client = MachineClient(worker['endpoint'], os.environ.get(worker['credential_env'], ''))
     p = model_profile(worker['profile'])
     body = {'model': 'openclaw/default', 'input': job['input'], 'stream': False,

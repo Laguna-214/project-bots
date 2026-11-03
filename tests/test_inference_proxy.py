@@ -5,12 +5,13 @@ from unittest.mock import patch
 from project_bots.repository import SQLiteRepository
 from project_bots.service import PlatformService
 from project_bots.models import DurableAdmission
+from security_fixtures import fixture_security
 
 class ProxyTests(unittest.TestCase):
     def test_authenticated_llamacpp_worker_stream_uses_durable_gate_and_rejects_wrong_model(self):
         from project_bots.inference_proxy import make_handler
         with tempfile.TemporaryDirectory() as t:
-            repo=SQLiteRepository(Path(t)/'workers'/'state.db');s=PlatformService(repo)
+            repo=fixture_security(SQLiteRepository(Path(t)/'workers'/'state.db'));s=PlatformService(repo)
             a=s.create_agent({'name':'test','role':'Researcher'})
             profile={'model':'qwen3:1.7b','context':32768,'max_output':256,'temperature':0,'memory_mib':8192,'priority':10}
             s.register_worker(a['id'],{'vm_id':str(uuid.uuid4()),'endpoint':'http://127.0.0.1:19889','credential_env':'TEST_PROXY_WORKER','profile':profile})

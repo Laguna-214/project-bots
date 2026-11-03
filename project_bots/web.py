@@ -5,6 +5,7 @@ import ipaddress
 import json
 from pathlib import Path
 import secrets
+import ssl
 import threading
 import time
 from urllib.parse import urlsplit
@@ -37,7 +38,7 @@ def make_handler(code, ttl_seconds=600):
             self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header('Referrer-Policy', 'no-referrer')
             self.send_header('X-Frame-Options', 'DENY')
-            self.send_header('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'")
+            self.send_header('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self'; manifest-src 'self'; worker-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'")
             self.end_headers()
             self.wfile.write(body)
 
@@ -60,7 +61,7 @@ def make_handler(code, ttl_seconds=600):
 
         def same_origin(self, require_origin=False):
             host = self.headers.get('Host', '')
-            origin = 'http://' + host
+            origin = ('https://' if isinstance(self.connection, ssl.SSLSocket) else 'http://') + host
             return (self.allowed_host() and
                     self.headers.get('X-Setup-Origin') == origin and
                     self.headers.get('Origin', None if require_origin else origin) == origin)

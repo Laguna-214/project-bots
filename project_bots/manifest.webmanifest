@@ -1,0 +1,12 @@
+{
+  "id": "/",
+  "name": "Project Bots",
+  "short_name": "Project Bots",
+  "description": "Chats, agents and activity on your own authenticated Project Bots backend.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0e18",
+  "theme_color": "#151d2c",
+  "icons": [{"src":"/client-icon.svg","type":"image/svg+xml","sizes":"any","purpose":"any maskable"}]
+}

@@ -140,6 +140,12 @@ class PlatformService:
     def compute_request(self, machine_id, method, route, data=None):
         import os
         from .machine_client import MachineClient
+        if method == 'POST' and (route == 'vms' or route.split('/')[-1] in ('start', 'restart', 'resume', 'snapshot-restore')):
+            from .security import check_global, check_agent_execution
+            check_global(self.repository)
+            for worker in self.repository.list('workers'):
+                if route.startswith('vms/' + worker['vm_id'] + '/'):
+                    check_agent_execution(self.repository, worker['agent_id'])
         identifier(machine_id)
         machine = next((m for m in self.repository.list('machines') if m['id'] == machine_id), None)
         if machine is None:
@@ -164,7 +170,28 @@ class PlatformService:
         if not reference:
             raise ValueError('Configure a compute credential environment reference')
         client = MachineClient(machine['endpoint'], os.environ.get(reference, ''), os.environ.get('PROJECT_BOTS_MACHINE_CA_FILE'))
-        return client.request(method, '/v1/' + route, data)
+        try:
+            return client.request(method, '/v1/' + route, data)
+        finally:
+            if method == 'POST' and (route == 'vms' or route.split('/')[-1] in ('start', 'restart', 'resume', 'snapshot-restore')):
+                # A stop may commit while the authorized remote request is in flight.
+                # Reconcile only registered owned targets; never touch unknown domains.
+                from .security import check_global, check_agent_execution, SecurityService
+                try:
+                    check_global(self.repository)
+                    for worker in self.repository.list('workers'):
+                        if route.startswith('vms/' + worker['vm_id'] + '/'):
+                            check_agent_execution(self.repository, worker['agent_id'])
+                except ConflictError:
+                    security = SecurityService(self.repository, self.compute_request)
+                    for worker in self.repository.list('workers'):
+                        if route.startswith('vms/' + worker['vm_id'] + '/'):
+                            agent_state = next(a for a in security.status()['agents'] if a['agent_id'] == worker['agent_id'])
+                            if agent_state.get('contained'):
+                                security.enforce(agent_state['incident_id'])
+                            else:
+                                security.report({'agent_id': worker['agent_id'], 'severity': 'high', 'behavior': 'admission_lost_during_compute', 'resource': worker['vm_id'], 'evidence': 'Trusted admission failed after in-flight execution-enabling compute request'}, source='trusted_backend')
+                    raise
 
     def register_worker(self, agent_id, data):
         from .models import model_profile
@@ -216,13 +243,16 @@ class PlatformService:
         if data['confirmation'] != 'dispatch:' + job_id:
             raise ValueError('Explicit dispatch confirmation required')
         job = self.repository.get_job(job_id)
+        from .security import check_agent_execution
+        check_agent_execution(self.repository, job['agent_id'])
         worker = self.repository.worker(job['agent_id'])
         self.repository.assert_worker_idle(worker['agent_id'])
         real_gateway = runner is None
         if real_gateway:
             from .workers import gateway_run
-            runner = gateway_run
+            runner = lambda worker, job: gateway_run(worker, job, repository=self.repository)
         with self.admission.slot(worker['profile']['memory_mib'], worker['profile']['priority']) as lease:
+            check_agent_execution(self.repository, worker['agent_id'])
             if real_gateway:
                 self.check_worker_model(worker)
                 self.check_worker_identity(worker)

@@ -32,6 +32,8 @@ def main(argv=None):
     platform = sub.add_parser('serve', help='Persistent Stage 1 workforce dashboard')
     platform.add_argument('--host', default='127.0.0.1')
     platform.add_argument('--port', type=int, default=8032)
+    platform.add_argument('--tls-cert', help='Trusted server certificate chain for direct HTTPS')
+    platform.add_argument('--tls-key', help='Private server key; provide together with --tls-cert')
     machine = sub.add_parser('machine-service', help='Dedicated authenticated session-libvirt compute service')
     machine.add_argument('--host', default='127.0.0.1')
     machine.add_argument('--port', type=int, default=9443)
@@ -40,7 +42,24 @@ def main(argv=None):
     machine.add_argument('--token-env', default='PROJECT_BOTS_COMPUTE_TOKEN')
     machine.add_argument('--tls-cert')
     machine.add_argument('--tls-key')
+    backup = sub.add_parser('backup', help='Consistent private database backup (no worker disks or secrets)')
+    backup.add_argument('--database', required=True, help='Existing private platform database')
+    backup.add_argument('--output', required=True, help='New file in an existing private directory')
+    restore = sub.add_parser('restore', help='Validate and restore into a NEW offline database path only')
+    restore.add_argument('--backup', required=True, help='Private validated SQLite backup')
+    restore.add_argument('--database', required=True, help='New database path; existing files are never replaced')
     args = parser.parse_args(argv)
+    if args.command in ('backup', 'restore'):
+        from .backup import run_copy
+        import sqlite3
+        try:
+            source = args.database if args.command == 'backup' else args.backup
+            destination = args.output if args.command == 'backup' else args.database
+            run_copy(source, destination, args.command)
+        except (ValueError, OSError, sqlite3.Error):
+            print('Database copy refused: check source integrity, private ownership/permissions and a new destination path.', file=sys.stderr)
+            return 1
+        return 0
     if args.command == 'machine-service':
         from .machine_http import serve as machine_serve
         try:
@@ -52,7 +71,11 @@ def main(argv=None):
         return 0
     if args.command == 'serve':
         from .platform_web import serve
-        serve(args.host, args.port)
+        try:
+            serve(args.host, args.port, args.tls_cert, args.tls_key)
+        except (ValueError, OSError):
+            print('Platform could not start: check private database, listener and HTTPS certificate/key configuration.', file=sys.stderr)
+            return 1
         return 0
     if args.command == 'setup' and args.mode == 'local':
         print('Providers: ' + ', '.join(PRESETS))

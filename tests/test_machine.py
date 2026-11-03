@@ -1,3 +1,4 @@
+from security_fixtures import fixture_repository, fixture_security
 """Stage 2 software contracts; mocked commands are NOT real libvirt tests."""
 import json
 import os
@@ -404,7 +405,7 @@ class MachineHTTPTests(unittest.TestCase):
             def operation(self, op_id): return {'id': op_id}
         token = secrets.token_urlsafe(32); admin = secrets.token_urlsafe(32)
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'COMPUTE_TEST_SECRET': token, 'PROJECT_BOTS_API_TOKEN': admin}):
-            service = PlatformService(SQLiteRepository(Path(temp) / 'private' / 'platform.db'))
+            service = PlatformService(fixture_repository(Path(temp) / 'private' / 'platform.db'))
             with ThreadingHTTPServer(('127.0.0.1', 0), make_handler(Fake(), token)) as compute:
                 thread = threading.Thread(target=compute.serve_forever, daemon=True); thread.start()
                 machine = service.create_machine({'name': 'fake only', 'endpoint': f'http://127.0.0.1:{compute.server_port}', 'credential_env': 'COMPUTE_TEST_SECRET'})

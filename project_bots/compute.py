@@ -30,7 +30,10 @@ def run_command(argv):
 
 
 class ComputeService:
-    def __init__(self, state, catalog, runner=run_command):
+    def __init__(self, state, catalog, runner=run_command, network_guard=None):
+        # Installed only by a trusted host launcher with independently verified
+        # runtime/netns bindings; never configured through the HTTP API.
+        self.network_guard = network_guard
         self.root = Path(state).expanduser().absolute()
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         if self.root.is_symlink() or self.root.stat().st_mode & 0o077:
@@ -82,7 +85,13 @@ class ComputeService:
                 raise ValueError
         except ValueError:
             ram_cap = 32768
-        return {'cpus': min(8, max(0, host['cpu_count'] - 2)),
+        try:
+            cpu_cap = int(os.environ.get('PROJECT_BOTS_COMPUTE_CPU_CAP', '8'))
+            if cpu_cap < 1:
+                raise ValueError
+        except ValueError:
+            cpu_cap = 8
+        return {'cpus': min(cpu_cap, max(0, host['cpu_count'] - 2)),
                 'ram_mib': min(ram_cap, max(0, host['memory_total_mib'] - 8192)),
                 'disk_gib': max(0, host['storage_free_gib'] - 10)}
 
@@ -97,11 +106,13 @@ class ComputeService:
                 raise ValueError('Host resource reservation policy exceeded')
 
     def health(self):
+        from .telemetry import collect_metrics
         self.virsh('version')
         return {'backend': 'libvirt', 'libvirt_uri': 'qemu:///session', **self.host_resources(),
                 'kvm_accessible': os.access('/dev/kvm', os.R_OK | os.W_OK),
                 'templates': sorted(json.loads(self.catalog.read_text())), 'policy': self.capacity(),
-                'network': 'session user-mode passt; loopback SSH forwarding', 'gpu_passthrough': False}
+                'network': 'session user-mode passt; loopback SSH forwarding', 'gpu_passthrough': False,
+                'utilization': collect_metrics()}
 
     def virsh(self, *args):
         return self.run(['virsh', '--connect', 'qemu:///session', *args])
@@ -148,7 +159,7 @@ class ComputeService:
                         raise ConflictError('Operation conflicts, is incomplete, or needs local reconciliation')
                     return previous['result']
                 for other in db.execute('SELECT data FROM operations WHERE target=?', (target,)):
-                    if json.loads(other[0])['status'] in ('running', 'unknown'):
+                    if action != 'force-stop' and json.loads(other[0])['status'] in ('running', 'unknown'):
                         raise ConflictError('Uncertain prior operation requires local reconciliation')
                 operation = {'id': op_id, 'target': target, 'action': action, 'status': 'running', 'started_at': time.time()}
                 db.execute('INSERT INTO operations VALUES (?, ?, ?, ?)', (op_id, target, digest, json.dumps(operation)))
@@ -312,6 +323,18 @@ class ComputeService:
             ids = [row[0] for row in db.execute('SELECT id FROM vms')]
         return [vm for vm_id in ids if (vm := self.detail(vm_id))['phase'] != 'deleted']
 
+    def network_status(self, vm_id):
+        detail = self.detail(vm_id)  # same UUID/owner/storage checks as lifecycle
+        if detail['state'] in ('unavailable', 'deleted'):
+            raise ComputeUnavailable('Cannot verify network target ownership')
+        if self.network_guard is None:
+            return {'vm_id': vm_id, 'blocked': False, 'status': 'unavailable',
+                    'source': 'No OS-verified runtime/network namespace binding installed'}
+        result = self.network_guard.inspect(vm_id)
+        if result.get('runtime_kind') != 'libvirt-vm' or result.get('vm_id') != vm_id:
+            raise ComputeUnavailable('Network adapter has no verified libvirt VM binding')
+        return result
+
     def action(self, vm_id, action, data):
         if identifier(vm_id) is None:
             raise ValueError('VM UUID required')
@@ -319,7 +342,7 @@ class ComputeService:
 
     def _action(self, vm_id, action, data):
         import re
-        allowed = {'start', 'shutdown', 'restart', 'pause', 'resume', 'delete', 'resources', 'snapshot-create', 'snapshot-restore'}
+        allowed = {'start', 'shutdown', 'restart', 'pause', 'resume', 'delete', 'resources', 'snapshot-create', 'snapshot-restore', 'force-stop', 'network-block'}
         if action not in allowed:
             raise ValueError('Unsupported action')
         extra = ('cpus', 'ram_mib', 'disk_gib') if action == 'resources' else ('snapshot',) if action.startswith('snapshot-') else ()
@@ -330,10 +353,36 @@ class ComputeService:
         state = vm.pop('state'); vm.pop('console', None)
         if vm['phase'] != 'defined':
             raise ConflictError('VM is not in defined phase')
+        if vm.get('security_contained') and action not in ('force-stop', 'network-block', 'shutdown'):
+            raise ConflictError('Host containment latched; offline administrator reconciliation required')
+        if action in ('force-stop', 'network-block'):
+            # Persist before touching the external system. A timeout, service
+            # restart, or later stopped observation cannot silently permit start.
+            # There is intentionally no HTTP unlatch/admin-assertion endpoint.
+            vm.update(security_contained=True, containment_operation_id=data['operation_id'], desired='shut off')
+            self.save(vm)
         if action in ('delete', 'resources', 'snapshot-create', 'snapshot-restore') and state != 'shut off':
             raise ConflictError('VM must be shut off')
         directory = self.root / vm_id; disk = directory / 'disk.qcow2'
-        if action == 'resources':
+        if action == 'network-block':
+            if self.network_guard is None or state == 'unavailable':
+                raise ConflictError('No verified host network adapter/target')
+            self._mutation_started = True
+            self.network_guard.block(vm_id)
+            result = self.network_status(vm_id)
+            if result.get('blocked') is not True:
+                raise ComputeUnavailable('Network enforcement could not be verified')
+            return result
+        if action == 'force-stop':
+            # libvirt destroy stops execution only: retain domain, disks and evidence.
+            # Never infer absence from a failed observation.
+            if state not in ('running', 'paused', 'in shutdown', 'blocked', 'pmsuspended', 'shut off', 'crashed'):
+                raise ConflictError('VM state cannot be safely force-stopped')
+            if state not in ('shut off', 'crashed'):
+                self._mutation_started = True
+                self.virsh('destroy', vm_id)
+            vm['desired'] = 'shut off'
+        elif action == 'resources':
             for name, low, high in [('cpus', 1, 8), ('ram_mib', 2048, 32768), ('disk_gib', vm['disk_gib'], 256)]:
                 if type(data[name]) is not int or not low <= data[name] <= high:
                     raise ValueError('Invalid resource bounds; disks cannot shrink')

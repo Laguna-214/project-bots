@@ -1,6 +1,105 @@
 # Implementation status
 
-## Current: Stage 4 bounded MCP coverage checkpoint; VM admission blocked
+> **RESUMED on 2026-11-03 with explicit user authorization.**
+> Latest parent-executed full source suite: **209 tests, OK with 3 skips**.
+> Optional XML validation separately passed; all **5 privileged namespace tests**
+> passed inside the approved disposable administrator VM. They prove kernel/network
+> and subprocess primitives, **not hostile VM containment**. Six Node UI programs,
+> nine native shell contracts and two artifact checks passed. Android debug APK
+> rebuilt/linted/signature-verified; real sandboxed Linux GUI/setup tests passed.
+> The old Android WebView design failed redirect-confinement review and was
+> replaced by the user-approved native design. **Android remains not accepted.**
+> The user-approved native Android replacement is built (no WebView). Parent
+> reran the build/signature, two-origin redirect/body/TLS/API/state tests and full
+> **209-test suite, OK with 3 skips**. All 300–399 redirects caused zero second-origin
+> contacts in host tests. Parent verified the subsequent emergency-stop fix:
+> global controls render before data loads and use a reserved zero-queue lane;
+> failed/oversized sections cannot hide them. New app/test APKs exist; independent
+> scoped independent re-review **passed** (`deleg_9c4a7a48`), with no blocking findings.
+> Instrumentation is compiled but **not executed**; Android runtime/header fidelity
+> and physical-device acceptance remain unverified. Full product acceptance is incomplete. Only the approved CPU-cap/lab deployment exception is established;
+> do not infer rollout of this source tree or permission to mutate original VMs.
+>
+> Current evidence, artifact hashes and continuation:
+> **[resumed checkpoint](docs/RESUME_CHECKPOINT_2026-11-03.md)** and
+> **[native clients](docs/NATIVE_CLIENTS.md)**. Subsequent sections are historical
+> checkpoints, not current feature absence/completion assertions.
+
+## Previous — durable security controls, shared scheduling and recovery (source increment)
+
+Continuation implements schema-v5 incident/state persistence, durable global/per-agent
+stop latches, fail-safe execution admission, explicit acknowledgment/recovery and an
+independent graceful-shutdown reconciler. Security dashboard controls expose agent
+state, health, incident evidence and partial action outcomes. Shared inference adds
+fair turns/aging, bounded queues/concurrency/rate/token budgets, owner cancellation,
+revocation checks and retained uncertain backend reservations. One centralized
+llama.cpp model architecture is preserved. Private validated database backup/restore
+commands are included. Full source contracts and limitations:
+[security](docs/SECURITY_INCREMENT.md), [inference](docs/INFERENCE_INCREMENT.md),
+[backup/recovery](docs/BACKUP_RECOVERY.md).
+
+**Not product completion:** no installed OS/network adapters, packet isolation,
+forced VM termination, protected external watchdog, immutable audit storage,
+automatic AI chat replies, native mobile/desktop apps, or four-real-agent/shared-model
+acceptance. Required health defaults unavailable; execution must fail closed, not
+silently fall back. No existing services, VMs or Hermes configuration were changed.
+Do not run the enforcer against production as a harmless read-only check: with
+missing coverage it requests worker shutdown. Reviewed deployment/host prerequisites
+and real security acceptance remain mandatory. Mandatory inference/security
+integration is verified against the workers registry DB (optional hooks cannot
+bypass it). Final combined run: **150 tests, OK with 1 optional skip**, all three
+Node interaction suites, JavaScript syntax and `git diff --check` passed. Backup
+fixture SQLite connection leaks were fixed; the final warnings-enabled full run
+emitted no warning lines. See the [continuation handoff](docs/CONTINUATION_SECURITY_INFERENCE.md).
+
+## Previous increment — Nov 2 source-tested chat foundation; security acceptance incomplete
+
+Started **2026-11-02 20:12:06 America/New_York**, after the scheduled start, from
+clean `main` **3091edd**. This is incremental work, not a rebuild or Stage 5 closure.
+The authoritative expanded roadmap has exactly five stages:
+**Core Application; Machine Manager; AI Workers & Model Manager; User Control &
+Collaboration; Final Product & Hardening**. See [requirements](docs/PRODUCT_REQUIREMENTS.md),
+[architecture](docs/ARCHITECTURE.md), [plan](docs/IMPLEMENTATION_PLAN.md) and
+[security acceptance](docs/SECURITY_ACCEPTANCE.md). Historical narrower completion
+statements below are retained history, not acceptance of this expanded brief.
+
+Implemented additive SQLite v4 persistent individual/group chats, memberships,
+idempotent messages/history, independently referenced agent chat credentials,
+transactional membership/enablement authorization and metadata-only security events.
+Responsive web chat/member forms and explicit unprotected-security status are added;
+advanced infrastructure controls are collapsed. No automatic AI replies/private-memory
+sharing, independent monitoring, network containment, incident engine, global stop
+latch, full user RBAC or native apps are claimed. Backend remains independent of
+Hermes; existing llama.cpp shared inference is preserved, no Ollama migration.
+
+Verification: **106 discovered, 105 passed, one optional libvirt-schema skip**;
+Node syntax and both VM/worker and chat fake-DOM contracts pass; whitespace check
+passes. Installed fixture HTTP/process-restart tests cover actual persistent chat
+API authorization/revocation and retained records. They do not prove real malicious
+VM containment, visual UI/native apps or four-agent model-context isolation.
+
+**Fresh read-only live state differs from earlier chat:** four original worker VMs
+are all **shut off**; additional stopped domain `80578231-c09e-4624-ab45-cbf676df91d0`
+is present, provenance unverified. Four registered `verified` worker records are
+stale, not running/protected proof. Platform 8033 and inference/tunnel/compute user
+services are active; loaded `qwen3-1_7b` report lacks trustworthy memory/GPU accounting.
+Four-real-agent/one-loaded-model acceptance is **BLOCKED / NOT RUN**. No VM, worker,
+job, service, inference configuration or host protection was changed. No Hermes
+configuration edits, commit, push or deployment of this source increment.
+
+The [corrected MCP checkpoint](docs/STAGE4_MCP_CHECKPOINT.md) recovers useful bounded
+evidence from `2251905`, superseding `91f08b0`'s unsupported lifecycle and physical/
+AppArmor RAM-limit claims. 32768 MiB is configurable application admission policy.
+MCP initialize alone is not authenticated API/native discovery or product completion.
+
+Exact files, interpreter/dependency findings, tests, limitations and next safe gate:
+**[product-update handoff](docs/PRODUCT_UPDATE_2026-11-02.md)** and
+[deployment boundaries](docs/DEPLOYMENT.md). Existing installed services remain on
+their prior copies; checkout changes have only run in isolated tests. All five
+stages remain partial against the expanded requirements. Privileged hostile-host
+and the 15 full malicious-agent acceptance chains are unverified, not simulated passes.
+
+## Previous: Stage 4 bounded MCP coverage checkpoint; VM admission blocked
 
 Continued from published `b37ce01` with strict observed RED→GREEN slices. **21**
 real SDK tools now include queued/manual cancellation, metadata-only agent
