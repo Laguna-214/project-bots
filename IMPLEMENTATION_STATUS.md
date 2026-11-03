@@ -4,7 +4,8 @@
 > Published development source checkpoint: `e93415b` ([draft PR #1](https://github.com/Laguna-214/project-bots/pull/1)), not merged/released.
 > Latest parent-executed checkpoint suite: **209 tests, OK with 3 skips**.
 > Subsequent trusted VM/network adapter implementation is in progress; it is not
-> covered by that checkpoint verification. No GitHub CI pass is claimed.
+> covered by that checkpoint verification. Both GitHub source/UI CI runs passed
+> on `0afa60c`; protected-VM code is not yet published or privileged-execution accepted.
 > Optional XML validation separately passed; all **5 privileged namespace tests**
 > passed inside the approved disposable administrator VM. They prove kernel/network
 > and subprocess primitives, **not hostile VM containment**. Six Node UI programs,
