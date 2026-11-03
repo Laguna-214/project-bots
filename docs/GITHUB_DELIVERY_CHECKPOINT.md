@@ -10,7 +10,13 @@ The user requested finishing the remaining work and updating GitHub. Work is con
 - New `.github/workflows/source-checks.yml` uses upstream-read pinned action commits and read-only repository permissions. It runs Python/MCP fixture contracts, six web UI programs, and desktop shell tests. Its JSON document is valid YAML-compatible flow syntax; embedded shell scripts passed syntax checks. Fresh isolated `npm ci --ignore-scripts` plus all nine desktop unit tests passed. GitHub rejected the initial push because the existing OAuth credential lacks the `workflow` scope. The tested workflow is retained locally but excluded from the published source commit; no broader credential access was requested. Actual GitHub Actions execution is **not available/not run** for this checkpoint.
 - Do not describe this workflow as Android, GPU/model, or privileged hostile-VM acceptance. It deliberately does not enable privileged host tests on a public runner.
 
-## Current blocking source review
+## Published checkpoint
+
+Source checkpoint `e93415b1be89a1d4885a4b52e184c14c8f48474c` was pushed and read back from GitHub. [Draft PR #1](https://github.com/Laguna-214/project-bots/pull/1) is open against `main`, not merged or released. The remote ref and PR head matched the local commit. `gh pr checks` reported **no checks**, not a CI pass.
+
+The next bounded implementation is trusted VM launch/kernel network enforcement (`deleg_39d8d404`), with no original VM/physical host mutation and independent review required before new privileged lab code executes. This work is not part of the checkpoint passing-test claim. Production monitoring/watchdog/audit and hardware/device acceptance remain incomplete.
+
+## Scoped source review result
 
 Native Android review `deleg_9d34bd02` found no concrete security issue but one emergency-stop availability bug: a failed/oversized informational Activity listing suppresses stop controls. Bounded TDD fix `deleg_d2f207db` completed. Parent repeated the actual native build: synchronous global control, independent section failures, security-success per-agent controls, stale-confirmation rejection and reserved stop dispatch under saturated informational work all passed. The real backend oversized jobs body remains rejected by the unchanged 1 MiB cap. Independent scoped re-review `deleg_9c4a7a48` **passed**, with no blocking security/logic findings. Source-fix review is closed; Android runtime acceptance is not. The replacement APK remains **not accepted**. Re-review and parent verification are required before publishing it as verified; device/instrumentation execution remains a separate unperformed gate.
 
