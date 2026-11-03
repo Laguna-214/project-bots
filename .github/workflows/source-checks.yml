@@ -1,0 +1,67 @@
+{
+  "name": "Source and UI contracts (not hardware acceptance)",
+  "on": {
+    "push": {},
+    "pull_request": {}
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "concurrency": {
+    "group": "source-checks-${{ github.ref }}",
+    "cancel-in-progress": true
+  },
+  "jobs": {
+    "source": {
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 15,
+      "steps": [
+        {
+          "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+        },
+        {
+          "uses": "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065",
+          "with": {
+            "python-version": "3.12"
+          }
+        },
+        {
+          "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+          "with": {
+            "node-version": "22"
+          }
+        },
+        {
+          "name": "Private test workspace",
+          "run": "install -d -m 0700 \"$RUNNER_TEMP/project-bots-tests\"\nprintf 'TMPDIR=%s\\n' \"$RUNNER_TEMP/project-bots-tests\" >> \"$GITHUB_ENV\""
+        },
+        {
+          "name": "Optional MCP SDK used by integration contracts",
+          "run": "python -m pip install -r requirements-mcp.txt"
+        },
+        {
+          "name": "Python source and fixture integration tests",
+          "run": "python -m unittest discover -s tests -v"
+        },
+        {
+          "name": "Shared web UI interaction contracts",
+          "run": "for test in tests/dashboard_vm.cjs tests/chat_ui.cjs tests/security_ui.cjs tests/client_ui.cjs tests/conversations_ui.cjs tests/approvals_ui.cjs; do\n  node \"$test\"\ndone"
+        },
+        {
+          "name": "Locked desktop dependencies without install scripts",
+          "working-directory": "clients/desktop",
+          "run": "npm ci --ignore-scripts --no-audit --no-fund"
+        },
+        {
+          "name": "Desktop shell unit contracts (not GUI acceptance)",
+          "working-directory": "clients/desktop",
+          "run": "npm test"
+        },
+        {
+          "name": "Whitespace and shell syntax",
+          "run": "git diff --check\nsh -n install.sh uninstall.sh clients/tools/build-android.sh"
+        }
+      ]
+    }
+  }
+}
