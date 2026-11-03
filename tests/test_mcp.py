@@ -21,6 +21,23 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(SDK, 'optional MCP SDK dependency (requirements-mcp.txt)')
 class MCPProtocolTests(unittest.TestCase):
+    def test_default_server_is_read_only_and_approval_capability_never_self_decides(self):
+        from project_bots.mcp_server import create_server
+        class Client:
+            def request(self, method, path, data=None):
+                return {}
+        async def exercise():
+            names = [t.name for t in await create_server(Client()).list_tools()]
+            self.assertIn('list_workers', names)
+            self.assertNotIn('vm_action', names)
+            self.assertNotIn('dispatch_job', names)
+            self.assertNotIn('configure_worker', names)
+            managed = [t.name for t in await create_server(Client(), management=True).list_tools()]
+            self.assertIn('request_action_approval', managed)
+            self.assertIn('vm_action', managed)
+            self.assertNotIn('approve_action', managed)
+        anyio.run(exercise)
+
     def test_job_dispatch_requires_exact_intent_and_retrievable_receipt(self):
         from project_bots.mcp_server import create_server
         calls = []
@@ -29,7 +46,7 @@ class MCPProtocolTests(unittest.TestCase):
                 calls.append((method, path, data))
                 return {'id': '11111111-1111-4111-8111-111111111111', 'status': 'succeeded'}
         async def exercise():
-            server = create_server(Client())
+            server = create_server(Client(), management=True)
             names = [t.name for t in await server.list_tools()]
             self.assertIn('dispatch_job', names)
             job = '11111111-1111-4111-8111-111111111111'
@@ -55,7 +72,7 @@ class MCPProtocolTests(unittest.TestCase):
             def request(self, method, path, data=None):
                 calls.append((method, path, data)); return {'status': 'canceled'}
         async def exercise():
-            server = create_server(Client())
+            server = create_server(Client(), management=True)
             job = '11111111-1111-4111-8111-111111111111'
             result = await server.call_tool('cancel_job', {'job_id': job})
             self.assertFalse(result.is_error)
@@ -69,7 +86,7 @@ class MCPProtocolTests(unittest.TestCase):
             def request(self, method, path, data=None):
                 calls.append((method, path, data)); return {'status': 'registered'}
         async def exercise():
-            server = create_server(Client())
+            server = create_server(Client(), management=True)
             await server.call_tool('register_agent', {'name': 'test', 'role': 'Researcher', 'model': 'local-model'})
             self.assertEqual(calls, [('POST', '/api/agents', {'name': 'test', 'role': 'Researcher', 'machine_id': None, 'config': {'model': 'local-model'}})])
         anyio.run(exercise)
@@ -81,7 +98,7 @@ class MCPProtocolTests(unittest.TestCase):
             def request(self, method, path, data=None):
                 calls.append((method, path, data)); return {} if method == 'POST' else []
         async def exercise():
-            server = create_server(Client())
+            server = create_server(Client(), management=True)
             aid = '11111111-1111-4111-8111-111111111111'
             vm = '22222222-2222-4222-8222-222222222222'
             args = dict(agent_id=aid, vm_id=vm, endpoint='http://127.0.0.1:1234', credential_env='WORKER_TOKEN', model='local-model', context=4096, temperature=0.2, max_output=512, memory_mib=8192, priority=50)
@@ -128,7 +145,7 @@ class MCPProtocolTests(unittest.TestCase):
             def request(self, method, path, data=None):
                 calls.append((method, path, data)); return {'ok': True}
         async def exercise():
-            server = create_server(Client())
+            server = create_server(Client(), management=True)
             names = [t.name for t in await server.list_tools()]
             self.assertIn('create_job', names)
             agent = '11111111-1111-4111-8111-111111111111'
@@ -149,7 +166,7 @@ class MCPProtocolTests(unittest.TestCase):
             def request(self, method, path, data=None):
                 calls.append((method, path, data)); return [] if path.endswith('/vms') and method == 'GET' else {'ok': True}
         async def exercise():
-            server = create_server(Client())
+            server = create_server(Client(), management=True)
             self.assertIn('vm_action', [t.name for t in await server.list_tools()])
             mid = '11111111-1111-4111-8111-111111111111'
             vm = '22222222-2222-4222-8222-222222222222'
@@ -178,7 +195,7 @@ class MCPProtocolTests(unittest.TestCase):
             def request(self, method, path, data=None):
                 calls.append((method, path, data)); return {'ok': True}
         async def exercise():
-            server=create_server(Client()); names=[t.name for t in await server.list_tools()]
+            server=create_server(Client(), management=True); names=[t.name for t in await server.list_tools()]
             self.assertIn('create_vm',names)
             mid='11111111-1111-4111-8111-111111111111'; op='22222222-2222-4222-8222-222222222222'
             args={'machine_id':mid,'template':'ubuntu-24.04','cpus':1,'ram_mib':2048,'disk_gib':16,'ssh_key':'ssh-ed25519 public-test','operation_id':op,'confirmation':'yes'}

@@ -1,0 +1,1 @@
+document.getElementById('connect').addEventListener('submit',async e=>{e.preventDefault();const r=await window.connection.connect(document.getElementById('endpoint').value);document.getElementById('error').textContent=r.error||'';});

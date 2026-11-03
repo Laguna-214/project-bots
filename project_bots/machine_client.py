@@ -7,7 +7,28 @@ from urllib.request import Request, build_opener, HTTPSHandler, HTTPRedirectHand
 
 from .compute import ComputeUnavailable
 from .machine_http import loopback, validate_listener
-from .service import endpoint, ConflictError
+from .service import endpoint, ConflictError, identifier, fields
+
+
+def containment_request(repository, machine_id, method, route, data=None):
+    """Trusted, registry-bound stop/readback only; no execution or shell channel."""
+    import os
+    parts = route.split('/')
+    if identifier(machine_id) is None or len(parts) not in (2, 3) or parts[0] not in ('vms', 'operations') or identifier(parts[1]) is None:
+        raise ValueError('Invalid containment target')
+    if method == 'POST':
+        if len(parts) != 3 or parts[0] != 'vms' or parts[2] not in ('shutdown', 'force-stop', 'network-block'):
+            raise ValueError('Containment-only action required')
+        fields(data, ('confirmation', 'operation_id'), ('confirmation', 'operation_id'))
+        if data['confirmation'] != parts[2] + ':' + parts[1] or identifier(data['operation_id']) is None:
+            raise ValueError('Exact containment confirmation and operation ID required')
+    elif method != 'GET' or (len(parts) != 2 and not (len(parts) == 3 and parts[0] == 'vms' and parts[2] == 'network')) or data is not None:
+        raise ValueError('Unsupported containment request')
+    machine = next((m for m in repository.list('machines') if m['id'] == machine_id), None)
+    if machine is None:
+        raise LookupError('Machine not found')
+    client = MachineClient(machine['endpoint'], os.environ.get(machine['credential_env'], ''), os.environ.get('PROJECT_BOTS_MACHINE_CA_FILE'))
+    return client.request(method, '/v1/' + route, data)
 
 
 class NoRedirect(HTTPRedirectHandler):

@@ -103,6 +103,8 @@ async function refresh() {
   renderJobs(jobs);
   $('inference-endpoint').value = settings.inference_endpoint;
   $('machine-api-env').value = settings.machine_api_env;
+  if (typeof chatRefresh === 'function') await chatRefresh();
+  if (typeof securityRefresh === 'function') await securityRefresh();
 }
 async function unlock() {
   csrf = (await api('/api/session')).csrf;
@@ -226,7 +228,3 @@ $('vm-action-operation').value = operationUUID();
 const lastCompute = sessionStorage.getItem('project-bots-last-compute-operation');
 if (lastCompute) $('compute-output').textContent = 'Previous request (inspect operation before retrying): ' + lastCompute;
 $('refresh').addEventListener('click', () => refresh().then(() => message('Refreshed.')).catch(e => message(e.message, true)));
-if (token) unlock().catch(() => {
-  token = ''; csrf = ''; sessionStorage.removeItem('project-bots-session');
-  message('Session unavailable. Pair with the current console code. If already consumed, restart the server for a new code.', true);
-});

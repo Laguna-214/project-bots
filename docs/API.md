@@ -1,6 +1,39 @@
-# Platform, compute and local-worker APIs (Stages 1–3)
+# Platform, compute, worker and chat APIs
 
-> Stage 3 RX 6800 GPU offload, automated four-VM Gateway deployment and real tool-job/restart gates passed on installed loopback `8033`. Full Stage 3 remains open on sandboxed guest-browser installation/interaction, not GPU permissions. Stage 2 `8032` remains separate and unchanged. See [current status](../IMPLEMENTATION_STATUS.md) and [llama.cpp evidence and recovery](LLAMA_CPP_MIGRATION.md).
+> This is an incremental single-administrator backend, not a completed hostile-agent security system. Current requirements and evidence boundaries: [implementation status](../IMPLEMENTATION_STATUS.md), [architecture](ARCHITECTURE.md), [deployment](DEPLOYMENT.md). Historical acceptance is time-bound; current worker registry status is not a live health or protection claim.
+
+## Persistent message broker — schema v4
+
+The message broker is part of the same authenticated backend, logically separate from llama.cpp **inference** admission. The existing platform browser session/CSRF or administrative machine bearer can manage chats. Agent-scoped chat bearers cannot access registry/jobs/settings/compute/model/security-administration routes.
+
+- `GET /api/chats`: newest 100 chats. Administrator sees all; agent sees only current memberships with an enabled chat identity. Each chat includes `id,title,kind,created_at,agent_ids`. Older-chat list pagination is not implemented.
+- `POST /api/chats` (admin): `{title,kind,agent_ids}` → 201. `kind` is `individual` (exactly one agent) or `group` (1–32 distinct canonical registered agent UUIDs). No runtime/model execution occurs.
+- `POST /api/chats/<chat UUID>/members` (admin): `{agent_ids:[...]}` replaces membership transactionally under the same kind/size rules. Unknown agents roll back the entire update. New members see all explicit shared history; removed members lose subsequent read/send access, not previously downloaded copies.
+- `POST /api/chats/<chat UUID>/messages`: `{client_id:"<canonical UUID>",content:"<nonempty text>"}` → 201 persisted message including sequence, chat_id, sender, client_id, content, created_at. Text limit 16000 characters; HTTP JSON limit 64 KiB. **Do not supply sender/agent/role fields**; the broker derives sender (`admin` or authenticated agent UUID). Same `(chat,sender,client_id)` and content returns the original message; conflicting content returns 409. Preserve the ID after an uncertain transport result and retry the same payload.
+- `GET /api/chats/<chat UUID>/messages?after=<sequence>`: oldest-first page of at most 100 subsequent messages, plus `has_more` and `next_after`. Cursor defaults to 0. Unknown/repeated query keys and invalid cursors fail. Only this read supports the `after` query. Membership and enabled identity are rechecked in the same transaction as message read/write.
+- `POST /api/agents/<agent UUID>/chat-identity` (admin): `{credential_env:"AGENT_CHAT_TOKEN_REFERENCE",enabled:true|false}`. Only a variable **name**, never a token value. Duplicate references conflict. Resolve a separately provisioned high-entropy bearer of at least 32 characters in the platform process environment; disabled/missing/short/ambiguous credentials are refused. Reusing known platform/compute/Gateway/inference-administration credentials is refused at configuration; reused matching agent token values fail authentication. Keep all authorities distinct. Token rotation in the inherited process environment normally requires a reviewed server restart; this is not short-lived credential issuance.
+- `GET /api/security/events` (admin): newest 100 chat metadata records, each sequence/UUID/time/agent/behavior/resource/outcome. Contains chat identity and membership changes and membership-denied message access, not message bodies, private reasoning, runtime telemetry or complete incident/containment records. No audit deletion/update API. Same-UID database writers remain trusted; this is not tamper-resistant external storage.
+
+Agent chat clients send only `Authorization: Bearer <privately provisioned chat token>` and `Content-Type: application/json` on POST, omitting browser Origin/fetch/setup headers. The only agent routes are chat list and message read/send. They cannot create chats, alter membership or change their identity. Unknown/nonmember message resources return 403 without exposing history. Admin still uses the existing browser protections; do not issue administrative credentials to workers. Default loopback plus private SSH transport remains required; HTTP does not encrypt credentials. These APIs do not supply a guest connectivity/tunnel policy or prevent direct inter-VM traffic.
+
+The source web UI supports create/select/member edits/history pages and idempotent retry after an in-tab transport failure. Refresh retrieves new messages; there is no automatic AI reply, private-memory assembly or agent adapter delivery loop. Authentication is still single administrator, not a multi-user account/RBAC service. The full [malicious-agent acceptance](SECURITY_ACCEPTANCE.md) remains unverified.
+
+## Trusted security and inference controls — schema v5
+
+Administrator-only status, incident/evidence, emergency-stop, acknowledgment and
+explicit recovery APIs are specified in [SECURITY_INCREMENT.md](SECURITY_INCREMENT.md).
+The Security dashboard consumes those routes and reports unavailable/partial
+actions. Agent chat credentials cannot access them. Global/per-agent stop and
+revoked credential fingerprints survive restart; recovery never starts workers.
+
+Worker execution and broker inference require fresh trusted coverage. Missing
+OS/network adapters deny execution; optional inference hooks cannot bypass the
+mandatory registry-backed security gate. See [INFERENCE_INCREMENT.md](INFERENCE_INCREMENT.md)
+for fair scheduling, queue/rate/token budgets, independent credential maps,
+owner-only `/v1/requests/cancel`, deadlines and uncertain backend reservations.
+Cancellation of forwarding is not verified remote generation termination. Historical
+serial admission descriptions below describe prior deployment, not the new source
+scheduler. No deployment was performed.
 
 ## Stage 3 routes
 

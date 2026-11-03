@@ -1,3 +1,4 @@
+from security_fixtures import fixture_repository, fixture_security
 import tempfile,unittest,uuid
 from pathlib import Path
 from project_bots.repository import SQLiteRepository
@@ -7,7 +8,7 @@ PROFILE={'model':'qwen3:1.7b','context':32768,'max_output':256,'temperature':0.2
 class WorkerTests(unittest.TestCase):
     def test_explicit_dispatch_persists_result_and_never_repeats(self):
         with tempfile.TemporaryDirectory() as t:
-            repo=SQLiteRepository(Path(t)/'private'/'p.db'); service=PlatformService(repo)
+            repo=fixture_repository(Path(t)/'private'/'p.db'); service=PlatformService(repo)
             a=service.create_agent({'name':'First','role':'ProjectWorker'})
             w=service.register_worker(a['id'], {'vm_id':str(uuid.uuid4()),'endpoint':'http://127.0.0.1:19889','credential_env':'WORKER_TOKEN','profile':PROFILE})
             self.assertEqual(w['status'],'configured')
@@ -18,14 +19,14 @@ class WorkerTests(unittest.TestCase):
             with self.assertRaises(ValueError):service.dispatch_job(job['id'],{},run)
             result=service.dispatch_job(job['id'],{'confirmation':'dispatch:'+job['id']},run)
             self.assertEqual(result['status'],'succeeded'); self.assertEqual(result['result'],'checkpoint-ok')
-            self.assertEqual(SQLiteRepository(repo.path).get_job(job['id'])['result'],'checkpoint-ok')
+            self.assertEqual(fixture_repository(repo.path).get_job(job['id'])['result'],'checkpoint-ok')
             with self.assertRaises(ConflictError):service.dispatch_job(job['id'],{'confirmation':'dispatch:'+job['id']},run)
             self.assertEqual(calls,[job['id']])
             self.assertEqual(repo.execution(job['id'])['response_id'],'resp_realshape')
 
     def test_failed_incomplete_and_uncertain_runs_are_not_success(self):
         with tempfile.TemporaryDirectory() as t:
-            repo=SQLiteRepository(Path(t)/'private'/'p.db'); service=PlatformService(repo)
+            repo=fixture_repository(Path(t)/'private'/'p.db'); service=PlatformService(repo)
             a=service.create_agent({'name':'First','role':'ProjectWorker'})
             service.register_worker(a['id'], {'vm_id':str(uuid.uuid4()),'endpoint':'http://127.0.0.1:19889','credential_env':'WORKER_TOKEN','profile':PROFILE})
             for status in ('failed','incomplete'):
@@ -44,12 +45,12 @@ class WorkerTests(unittest.TestCase):
 
     def test_running_receipt_blocks_legacy_mutations_after_restart(self):
         with tempfile.TemporaryDirectory() as t:
-            repo=SQLiteRepository(Path(t)/'private'/'p.db'); service=PlatformService(repo)
+            repo=fixture_repository(Path(t)/'private'/'p.db'); service=PlatformService(repo)
             a=service.create_agent({'name':'First','role':'ProjectWorker'})
             w=service.register_worker(a['id'], {'vm_id':str(uuid.uuid4()),'endpoint':'http://127.0.0.1:19889','credential_env':'WORKER_TOKEN','profile':PROFILE})
             j=service.create_job({'title':'crash','input':'test','agent_id':a['id']})
             repo.begin_execution(j['id'],w)
-            service=PlatformService(SQLiteRepository(repo.path))
+            service=PlatformService(fixture_repository(repo.path))
             for action,data in [('cancel',{}),('complete',{'result':'fake'}),('fail',{'error':'fake'})]:
                 with self.assertRaises(ConflictError): service.job_action(j['id'],action,data)
 
@@ -62,7 +63,7 @@ class WorkerTests(unittest.TestCase):
             if path=='/management/loaded': return {'models':[]}
             return {'capabilities':['tools'], 'model_info':info}
         with tempfile.TemporaryDirectory() as t:
-            repo=SQLiteRepository(Path(t)/'private'/'p.db'); service=PlatformService(repo)
+            repo=fixture_repository(Path(t)/'private'/'p.db'); service=PlatformService(repo)
             a=service.create_agent({'name':'Budget proof','role':'ProjectWorker'})
             worker={'vm_id':str(uuid.uuid4()),'endpoint':'http://127.0.0.1:19889','credential_env':'WORKER_TOKEN','profile':PROFILE}
             service.register_worker(a['id'], worker)
@@ -112,7 +113,7 @@ class WorkerTests(unittest.TestCase):
         import os,time
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as t:
-            repo=SQLiteRepository(Path(t)/'private'/'p.db');service=PlatformService(repo)
+            repo=fixture_repository(Path(t)/'private'/'p.db');service=PlatformService(repo)
             machine=service.create_machine({'name':'compute','endpoint':'http://127.0.0.1:19443','credential_env':'COMPUTE_TOKEN'})
             a=service.create_agent({'name':'Verified worker','role':'ProjectWorker','machine_id':machine['id']})
             vm_id=str(uuid.uuid4())
@@ -150,7 +151,10 @@ class WorkerTests(unittest.TestCase):
         os.environ['TEST_WORKER_TOKEN']='test-gateway-token-'+('0123456789abcdef'*3)
         try:
             w={'endpoint':'http://127.0.0.1:'+str(server.server_port),'credential_env':'TEST_WORKER_TOKEN','profile':PROFILE}
-            gateway_run(w,{'id':str(uuid.uuid4()),'input':'hello'})
+            with tempfile.TemporaryDirectory() as t:
+                repo = fixture_repository(Path(t)/'private/state.db')
+                w['agent_id'] = PlatformService(repo).create_agent({'name': 'wire fixture', 'role': 'r'})['id']
+                gateway_run(w,{'id':str(uuid.uuid4()),'input':'hello'},repository=repo)
             self.assertEqual(observed['path'],'/v1/responses')
             self.assertEqual(observed['authorization'],'Bearer '+os.environ['TEST_WORKER_TOKEN'])
             self.assertEqual(observed['body']['model'],'openclaw/default')
@@ -170,7 +174,7 @@ class WorkerTests(unittest.TestCase):
         from http.server import ThreadingHTTPServer
         from project_bots.platform_web import make_platform_handler
         with tempfile.TemporaryDirectory() as t:
-            service=PlatformService(SQLiteRepository(Path(t)/'private'/'p.db'))
+            service=PlatformService(fixture_repository(Path(t)/'private'/'p.db'))
             a=service.create_agent({'name':'First','role':'ProjectWorker'})
             os.environ['PROJECT_BOTS_API_TOKEN']='platform-test-'+('0123456789abcdef'*3)
             server=ThreadingHTTPServer(('127.0.0.1',0),make_platform_handler('12345678',service));thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()

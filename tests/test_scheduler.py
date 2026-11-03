@@ -1,3 +1,4 @@
+from security_fixtures import fixture_repository, fixture_security
 """Durable inference admission across independent platform processes."""
 import multiprocessing
 from pathlib import Path
@@ -10,13 +11,13 @@ from project_bots import models
 
 
 def contender(path, entered):
-    gate = models.DurableAdmission(SQLiteRepository(path))
+    gate = models.DurableAdmission(fixture_repository(path))
     with gate.slot(8192, 1, timeout=3):
         entered.set()
 
 
 def crash_holder(path, entered):
-    gate = models.DurableAdmission(SQLiteRepository(path))
+    gate = models.DurableAdmission(fixture_repository(path))
     with gate.slot(8192, 1):
         entered.set()
         time.sleep(60)
@@ -26,7 +27,7 @@ class SchedulerTests(unittest.TestCase):
     def test_killed_process_does_not_release_possibly_running_remote_inference(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'private' / 'platform.db'
-            gate = models.DurableAdmission(SQLiteRepository(path))
+            gate = models.DurableAdmission(fixture_repository(path))
             entered = multiprocessing.Event()
             child = multiprocessing.Process(target=crash_holder, args=(str(path), entered))
             child.start()
@@ -34,7 +35,7 @@ class SchedulerTests(unittest.TestCase):
                 self.assertTrue(entered.wait(5))
             finally:
                 child.terminate(); child.join(5)
-            restarted = models.DurableAdmission(SQLiteRepository(path))
+            restarted = models.DurableAdmission(fixture_repository(path))
             with self.assertRaises(TimeoutError):
                 with restarted.slot(8192, 1, timeout=.05): pass
             with restarted.repository.transaction() as db:
@@ -44,10 +45,10 @@ class SchedulerTests(unittest.TestCase):
         import threading
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'private' / 'platform.db'
-            gate = models.DurableAdmission(SQLiteRepository(path), queue_limit=2)
+            gate = models.DurableAdmission(fixture_repository(path), queue_limit=2)
             entered = []
             def run(priority, label):
-                other = models.DurableAdmission(SQLiteRepository(path))
+                other = models.DurableAdmission(fixture_repository(path))
                 with other.slot(8192, priority, timeout=3):
                     entered.append(label)
             with gate.slot(8192, 10):
@@ -63,7 +64,7 @@ class SchedulerTests(unittest.TestCase):
             self.assertEqual(entered, ['high', 'low'])
             with gate.slot(8192, 10) as lease:
                 lease.retain()
-            restarted = models.DurableAdmission(SQLiteRepository(path))
+            restarted = models.DurableAdmission(fixture_repository(path))
             with self.assertRaises(TimeoutError):
                 with restarted.slot(8192, 1, timeout=.05): pass
             self.assertEqual(restarted.pending, 0)
@@ -72,7 +73,7 @@ class SchedulerTests(unittest.TestCase):
         from project_bots.service import PlatformService
         import uuid
         with tempfile.TemporaryDirectory() as directory:
-            repo = SQLiteRepository(Path(directory) / 'private' / 'platform.db')
+            repo = fixture_repository(Path(directory) / 'private' / 'platform.db')
             service = PlatformService(repo)
             self.assertIsInstance(service.admission, models.DurableAdmission)
             agent = service.create_agent({'name': 'test', 'role': 'analyst'})
@@ -89,7 +90,7 @@ class SchedulerTests(unittest.TestCase):
         from unittest.mock import patch
         import uuid
         with tempfile.TemporaryDirectory() as directory:
-            repo=SQLiteRepository(Path(directory)/'private'/'p.db');service=PlatformService(repo)
+            repo=fixture_repository(Path(directory)/'private'/'p.db');service=PlatformService(repo)
             agent=service.create_agent({'name':'Storage failure','role':'ProjectWorker'})
             profile={'model':'qwen3:1.7b','context':32768,'max_output':256,'temperature':0,'memory_mib':8192,'priority':10}
             service.register_worker(agent['id'],{'vm_id':str(uuid.uuid4()),'endpoint':'http://127.0.0.1:19889','credential_env':'WORKER_TOKEN','profile':profile})
@@ -104,7 +105,7 @@ class SchedulerTests(unittest.TestCase):
     def test_independent_process_cannot_exceed_shared_budget(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'private' / 'platform.db'
-            gate = models.DurableAdmission(SQLiteRepository(path))
+            gate = models.DurableAdmission(fixture_repository(path))
             entered = multiprocessing.Event()
             with gate.slot(8192, 50):
                 child = multiprocessing.Process(target=contender, args=(str(path), entered))

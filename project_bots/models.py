@@ -108,7 +108,7 @@ class NativeClient:
             raise ValueError('Missing native broker credential')
         self.opener = build_opener(ProxyHandler({}), NoRedirect())
 
-    def request(self, method, path, data=None):
+    def request(self, method, path, data=None, *, timeout=None):
         import json
         from urllib.request import Request
         routes = {'/management/models':'GET' if method == 'GET' else 'DELETE', '/management/loaded':'GET', '/management/show':'POST', '/management/download':'POST', '/models':'GET', '/models?reload=1':'GET', '/models/load':'POST', '/models/unload':'POST'}
@@ -118,7 +118,9 @@ class NativeClient:
         if self.token:
             headers['Authorization'] = 'Bearer '+self.token
         r = Request(self.address+path, data=None if data is None else json.dumps(data).encode(), method=method, headers=headers)
-        with self.opener.open(r, timeout=300 if path in ('/models/load', '/management/download') else 15) as response:
+        if timeout is None:timeout=300 if path in ('/models/load', '/management/download') else 15
+        if not 0 < timeout <= 300:raise ValueError('Invalid native deadline')
+        with self.opener.open(r, timeout=timeout) as response:
             raw = response.read(2*1024*1024+1)
             if len(raw)>2*1024*1024:
                 raise ValueError('Oversized model response')

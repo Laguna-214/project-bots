@@ -78,6 +78,8 @@ def make_handler(backend, token):
                     result = backend.list() if method == 'GET' else backend.create(data)
                 elif len(parts) == 4 and parts[1:3] == ['v1', 'vms'] and method == 'GET':
                     result = backend.detail(parts[3])
+                elif len(parts) == 5 and parts[1:3] == ['v1', 'vms'] and parts[4] == 'network' and method == 'GET':
+                    result = backend.network_status(parts[3])
                 elif len(parts) == 5 and parts[1:3] == ['v1', 'vms'] and method == 'POST':
                     result = backend.action(parts[3], parts[4], data)
                 elif len(parts) == 4 and parts[1:3] == ['v1', 'operations'] and method == 'GET':
@@ -97,11 +99,19 @@ def make_handler(backend, token):
     return Handler
 
 
-def serve(host, port, state, catalog, token_env='PROJECT_BOTS_COMPUTE_TOKEN', cert=None, key=None):
+def compute_backend(protected, state, catalog):
+    if protected:
+        from .protected_compute import ProtectedClient
+        return ProtectedClient()
+    from .compute import ComputeService
+    return ComputeService(state, catalog)
+
+
+def serve(host, port, state, catalog, token_env='PROJECT_BOTS_COMPUTE_TOKEN', cert=None, key=None,
+          protected=False):
     import os
     import ssl
     from http.server import ThreadingHTTPServer
-    from .compute import ComputeService
     from .service import env_reference
     token = os.environ.get(env_reference(token_env), '')
     validate_listener(host, token, cert, key)
@@ -110,7 +120,7 @@ def serve(host, port, state, catalog, token_env='PROJECT_BOTS_COMPUTE_TOKEN', ce
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(cert, key)
-    backend = ComputeService(state, catalog)
+    backend = compute_backend(protected, state, catalog)
     with ThreadingHTTPServer((host, port), make_handler(backend, token)) as server:
         if context:
             server.socket = context.wrap_socket(server.socket, server_side=True)

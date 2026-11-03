@@ -1,3 +1,4 @@
+from security_fixtures import fixture_repository, fixture_security
 """Stage 1 repository and installed HTTP acceptance tests."""
 import concurrent.futures
 from contextlib import closing
@@ -26,6 +27,7 @@ class InstalledPlatformTests(unittest.TestCase):
         self.start()
 
     def start(self):
+        fixture_repository(self.env['PROJECT_BOTS_DB'])
         exe = self.home / '.local/bin/project-bots'
         self.process = subprocess.Popen([str(exe), 'serve', '--port', '0'], cwd=self.home, env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         assert self.process.stdout is not None
@@ -67,6 +69,89 @@ class InstalledPlatformTests(unittest.TestCase):
     def pair(self):
         self.token = self.request('POST', '/api/pair', {'code': self.code})['token']
         self.csrf = self.request('GET', '/api/session')['csrf']
+
+    def test_persistent_individual_group_chats_and_idempotent_messages(self):
+        import uuid
+        self.pair()
+        agent = self.request('POST', '/api/agents', {'name': 'Researcher', 'role': 'research'}, 201)
+        other = self.request('POST', '/api/agents', {'name': 'Programmer', 'role': 'code'}, 201)
+        single = self.request('POST', '/api/chats', {'title': 'Private discussion', 'kind': 'individual', 'agent_ids': [agent['id']]}, 201)
+        group = self.request('POST', '/api/chats', {'title': 'Team', 'kind': 'group', 'agent_ids': [agent['id'], other['id']]}, 201)
+        path = '/api/chats/' + group['id'] + '/messages'
+        payload = {'client_id': str(uuid.uuid4()), 'content': '<script>not executable</script>\nHello team'}
+        sent = self.request('POST', path, payload, 201)
+        self.assertEqual(sent['sender'], 'admin')
+        self.assertEqual(self.request('POST', path, payload, 201), sent)
+        self.request('POST', path, dict(payload, content='conflicting retry'), 409)
+        self.request('POST', path, dict(payload, sender=agent['id']), 400)
+        self.request('POST', '/api/chats', {'title': 'Invalid', 'kind': 'individual', 'agent_ids': [agent['id'], other['id']]}, 400)
+        self.stop()
+        self.start()
+        self.pair()
+        self.assertEqual({c['id'] for c in self.request('GET', '/api/chats')}, {single['id'], group['id']})
+        self.assertEqual(self.request('GET', path)['messages'], [sent])
+        self.assertEqual(self.request('GET', path + '?after=' + str(sent['sequence']))['messages'], [])
+        self.assertEqual(self.request('GET', '/api/agents'), [agent, other])
+        self.assertEqual(self.request('GET', '/api/jobs'), [])
+
+    def test_chat_broker_agent_identity_membership_and_immediate_revocation(self):
+        import uuid
+        self.stop()
+        self.env.update(CHAT_A_TOKEN='chat-a-fixture-' + '1234567890abcdef' * 3, CHAT_B_TOKEN='chat-b-fixture-' + 'abcdef1234567890' * 3)
+        self.start()
+        self.pair()
+        a = self.request('POST', '/api/agents', {'name': 'A', 'role': 'research'}, 201)['id']
+        b = self.request('POST', '/api/agents', {'name': 'B', 'role': 'code'}, 201)['id']
+        for agent_id, reference in ((a, 'CHAT_A_TOKEN'), (b, 'CHAT_B_TOKEN')):
+            self.request('POST', '/api/agents/' + agent_id + '/chat-identity', {'credential_env': reference, 'enabled': True})
+        self.request('POST', '/api/agents/' + b + '/chat-identity', {'credential_env': 'CHAT_A_TOKEN', 'enabled': True}, 409)
+        chat = self.request('POST', '/api/chats', {'title': 'A only', 'kind': 'group', 'agent_ids': [a]}, 201)
+        path = '/api/chats/' + chat['id'] + '/messages'
+        ah = {'Authorization': 'Bearer ' + self.env['CHAT_A_TOKEN'], 'Content-Type': 'application/json'}
+        bh = dict(ah, Authorization='Bearer ' + self.env['CHAT_B_TOKEN'])
+        payload = {'client_id': str(uuid.uuid4()), 'content': 'A shared report'}
+        sent = self.request('POST', path, payload, 201, headers=ah)
+        self.assertEqual(sent['sender'], a)
+        self.request('POST', path, dict(payload, sender=b), 400, headers=ah)
+        self.request('POST', path, dict(payload, content='b attempt'), 403, headers=bh)
+        self.request('GET', path, status=403, headers=bh)
+        self.assertEqual(self.request('GET', '/api/chats', headers=bh), [])
+        self.request('GET', '/api/jobs', status=403, headers=ah)
+        self.request('POST', '/api/chats', {'title': 'Escalate'}, 403, headers=ah)
+        self.request('POST', '/api/chats/' + chat['id'] + '/members', {'agent_ids': [a, b]}, 403, headers=ah)
+        self.request('POST', '/api/chats/' + chat['id'] + '/members', {'agent_ids': [a, b]})
+        self.assertEqual(self.request('GET', path, headers=bh)['messages'], [sent])
+        reply = self.request('POST', path, {'client_id': str(uuid.uuid4()), 'content': 'B collaborative reply'}, 201, headers=bh)
+        self.assertEqual(reply['sender'], b)
+        self.assertEqual(self.request('GET', path, headers=ah)['messages'], [sent, reply])
+        self.request('POST', '/api/chats/' + chat['id'] + '/members', {'agent_ids': [b]})
+        self.request('GET', path, status=403, headers=ah)
+        self.request('POST', path, {'client_id': str(uuid.uuid4()), 'content': 'revoked'}, 403, headers=ah)
+        self.request('POST', '/api/agents/' + b + '/chat-identity', {'credential_env': 'CHAT_B_TOKEN', 'enabled': False})
+        self.request('GET', path, status=403, headers=bh)
+        events = self.request('GET', '/api/security/events')['events']
+        self.assertTrue(any(e['behavior'] == 'message_access_denied' and e['agent_id'] == a for e in events))
+        self.assertTrue(any(e['behavior'] == 'chat_membership_changed' for e in events))
+        self.assertNotIn('A shared report', json.dumps(events))
+        self.assertEqual(self.request('GET', path)['messages'], [sent, reply])
+
+    def test_chat_rejects_ambiguous_tokens_and_malformed_membership(self):
+        self.stop()
+        shared = 'test-ambiguous-' + '1234567890abcdef' * 3
+        self.env.update(CHAT_A_TOKEN=shared, CHAT_B_TOKEN=shared)
+        self.start()
+        self.pair()
+        a = self.request('POST', '/api/agents', {'name': 'A', 'role': 'r'}, 201)['id']
+        b = self.request('POST', '/api/agents', {'name': 'B', 'role': 'r'}, 201)['id']
+        for agent_id, reference in ((a, 'CHAT_A_TOKEN'), (b, 'CHAT_B_TOKEN')):
+            self.request('POST', '/api/agents/' + agent_id + '/chat-identity', {'credential_env': reference, 'enabled': True})
+        headers = {'Authorization': 'Bearer ' + shared}
+        self.request('GET', '/api/chats', status=403, headers=headers)
+        self.request('GET', '/api/agents', status=403, headers=headers)
+        self.request('POST', '/api/agents/' + a + '/chat-identity', {'credential_env': 'PROJECT_BOTS_API_TOKEN', 'enabled': True}, 409)
+        for members in ([None], [[]], ['bad'], [a, a], []):
+            self.request('POST', '/api/chats', {'title': 'Bad members', 'kind': 'group', 'agent_ids': members}, 400)
+        self.assertEqual(self.request('GET', '/api/chats'), [])
 
     def test_http_concurrent_claims_have_one_winner_and_size_limits(self):
         self.pair()
@@ -142,6 +227,25 @@ class InstalledPlatformTests(unittest.TestCase):
         self.assertNotIn('Cancel this job? No worker will be signaled in Stage 1.', script)
         self.assertTrue({'worker-form', 'dispatch-form', 'execution-form', 'model-form', 'worker-output', 'model-output'} <= parsed.ids)
         self.assertIn('width=device-width', html)
+        self.assertTrue({'chats', 'chat-create-form', 'chat-message-form', 'chat-members', 'chat-history', 'security-events'} <= parsed.ids)
+        chat_script = self.request('GET', '/chat.js')
+        self.assertIn('textContent', chat_script)
+        self.assertNotIn('innerHTML', chat_script)
+        self.assertIn('client_id', chat_script)
+        self.assertIn('/members', chat_script)
+        security_script = self.request('GET', '/security.js')
+        self.assertTrue({'security-status', 'security-stop-all', 'security-restore', 'security-health', 'security-agents', 'security-incidents', 'security-evidence'} <= parsed.ids)
+        self.assertIn('/api/security/emergency-stop', security_script)
+        self.assertIn('securityRefresh', script)
+        self.assertNotIn('innerHTML', security_script)
+        conversation_script = self.request('GET', '/conversations.js')
+        self.assertIn('/api/conversations/jobs', conversation_script)
+        self.assertTrue({'conversation-form', 'conversation-agent', 'conversation-jobs'} <= parsed.ids)
+        self.assertIn('conversations.js', html)
+        approvals_script = self.request('GET', '/approvals.js')
+        self.assertIn('/api/approvals/', approvals_script)
+        self.assertNotIn('innerHTML', approvals_script)
+        self.assertTrue({'approvals-list', 'integration-form', 'integration-token', 'integration-operations'} <= parsed.ids)
 
     def test_machine_api_settings_and_browser_guards(self):
         machine_headers = {'Authorization': 'Bearer ' + self.env['PROJECT_BOTS_API_TOKEN'], 'Content-Type': 'application/json'}
@@ -215,21 +319,21 @@ class RepositoryTests(unittest.TestCase):
         parent.mkdir(mode=0o755)
         parent.chmod(0o755)
         with self.assertRaisesRegex(ValueError, 'private directory'):
-            SQLiteRepository(parent / 'platform.db')
+            fixture_repository(parent / 'platform.db')
         self.assertEqual(parent.stat().st_mode & 0o777, 0o755)
         self.assertFalse((parent / 'platform.db').exists())
 
     def test_settings_are_separate_local_only_and_store_references(self):
         from project_bots.repository import SQLiteRepository
         from project_bots.service import PlatformService
-        service = PlatformService(SQLiteRepository(self.path))
+        service = PlatformService(fixture_repository(self.path))
         settings = service.get_settings()
         self.assertEqual(settings['inference_endpoint'], 'http://127.0.0.1:11434')
         self.assertFalse(settings['cloud_fallback'])
         settings['inference_endpoint'] = 'http://10.0.50.30:11434'
         settings['machine_api_env'] = 'PB_MACHINE_TOKEN'
         service.save_settings(settings)
-        self.assertEqual(PlatformService(SQLiteRepository(self.path)).get_settings(), settings)
+        self.assertEqual(PlatformService(fixture_repository(self.path)).get_settings(), settings)
         for bad in [dict(settings, cloud_fallback=True), dict(settings, token='secret'), dict(settings, machine_api_env='secret-value')]:
             with self.assertRaises(ValueError):
                 service.save_settings(bad)
@@ -237,7 +341,7 @@ class RepositoryTests(unittest.TestCase):
     def test_job_transitions_are_validated_and_claims_are_atomic(self):
         from project_bots.repository import SQLiteRepository
         from project_bots.service import PlatformService, ConflictError
-        service = PlatformService(SQLiteRepository(self.path))
+        service = PlatformService(fixture_repository(self.path))
         agent = service.create_agent({'name': 'A', 'role': 'planner'})
         other = service.create_agent({'name': 'B', 'role': 'planner'})
         job = service.create_job({'title': 'J', 'input': 'I', 'agent_id': agent['id']})
@@ -247,7 +351,7 @@ class RepositoryTests(unittest.TestCase):
             service.job_action(job['id'], 'claim', {'agent_id': other['id']})
         def claim(_):
             try:
-                return PlatformService(SQLiteRepository(self.path)).job_action(job['id'], 'claim', {'agent_id': agent['id']})['status']
+                return PlatformService(fixture_repository(self.path)).job_action(job['id'], 'claim', {'agent_id': agent['id']})['status']
             except ConflictError:
                 return 'conflict'
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
@@ -280,7 +384,7 @@ class RepositoryTests(unittest.TestCase):
     def test_job_assignment_claim_progress_and_result_survive_restart(self):
         from project_bots.repository import SQLiteRepository
         from project_bots.service import PlatformService
-        service = PlatformService(SQLiteRepository(self.path))
+        service = PlatformService(fixture_repository(self.path))
         agent = service.create_agent({'name': 'Planner', 'role': 'planner'})
         job = service.create_job({'title': 'Plan', 'input': 'Draft a plan'})
         self.assertEqual(job['status'], 'queued')
@@ -293,7 +397,7 @@ class RepositoryTests(unittest.TestCase):
         job = service.job_action(job['id'], 'complete', {'result': 'The plan'})
         self.assertEqual(job['status'], 'succeeded')
         self.assertEqual(job['progress'], 100)
-        again = PlatformService(SQLiteRepository(self.path))
+        again = PlatformService(fixture_repository(self.path))
         self.assertEqual(again.get_job(job['id']), job)
         self.assertEqual(again.list('jobs'), [job])
         self.assertEqual(service.list('agents')[0]['status'], 'registered')
@@ -301,7 +405,7 @@ class RepositoryTests(unittest.TestCase):
     def test_agent_registration_validates_fields_and_foreign_keys(self):
         from project_bots.repository import SQLiteRepository
         from project_bots.service import PlatformService
-        service = PlatformService(SQLiteRepository(self.path))
+        service = PlatformService(fixture_repository(self.path))
         machine = service.create_machine({'name': 'Compute', 'endpoint': 'http://10.0.50.30:9443'})
         agent = service.create_agent({'name': 'Research', 'role': 'researcher', 'config': {'model': 'local-model'}, 'machine_id': machine['id']})
         self.assertEqual(agent['status'], 'registered')
@@ -321,40 +425,42 @@ class RepositoryTests(unittest.TestCase):
     def test_machine_registration_persists_with_private_migrated_database(self):
         from project_bots.repository import SQLiteRepository
         from project_bots.service import PlatformService
-        service = PlatformService(SQLiteRepository(self.path))
+        service = PlatformService(fixture_repository(self.path))
         machine = service.create_machine({'name': 'Compute', 'endpoint': 'https://compute.lan:9443', 'credential_env': 'COMPUTE_TOKEN'})
         self.assertEqual(machine['status'], 'unverified')
         self.assertEqual(machine['endpoint'], 'https://compute.lan:9443')
         import uuid
         self.assertEqual(str(uuid.UUID(machine['id'])), machine['id'])
-        again = PlatformService(SQLiteRepository(self.path))
+        again = PlatformService(fixture_repository(self.path))
         self.assertEqual(again.list('machines'), [machine])
         self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(self.path.parent.stat().st_mode & 0o777, 0o700)
         import sqlite3
         with closing(sqlite3.connect(self.path)) as db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 3)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 6)
 
     def test_stage_one_database_migrates_without_losing_registry_and_jobs(self):
         import sqlite3
         from project_bots.repository import SQLiteRepository
         from project_bots.service import PlatformService
-        service = PlatformService(SQLiteRepository(self.path))
+        service = PlatformService(fixture_repository(self.path))
         machine = service.create_machine({'name': 'Existing', 'endpoint': 'https://compute.lan:9443'})
         agent = service.create_agent({'name': 'Existing worker', 'role': 'analyst', 'machine_id': machine['id']})
         job = service.create_job({'title': 'Existing job', 'input': 'Keep me', 'agent_id': agent['id']})
         with closing(sqlite3.connect(self.path)) as db:
+            for table in ('integration_operations', 'integration_approvals', 'integration_principals', 'chat_messages', 'chat_members', 'chats', 'chat_identities', 'security_events'):
+                db.execute('DROP TABLE ' + table)
             db.execute('DROP TABLE inference_admission')
             db.execute('DROP TABLE executions')
             db.execute('DROP TABLE workers')
             db.execute('PRAGMA user_version = 1')
             db.commit()
-        migrated = PlatformService(SQLiteRepository(self.path))
+        migrated = PlatformService(fixture_repository(self.path))
         self.assertEqual(migrated.list('machines'), [machine])
         self.assertEqual(migrated.list('agents'), [agent])
         self.assertEqual(migrated.list('jobs'), [job])
         self.assertEqual(migrated.list('workers'), [])
         with closing(sqlite3.connect(self.path)) as db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 3)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 6)
             self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(), [])
-        self.assertEqual(PlatformService(SQLiteRepository(self.path)).list('jobs'), [job])
+        self.assertEqual(PlatformService(fixture_repository(self.path)).list('jobs'), [job])
